@@ -564,6 +564,7 @@ void ICACHE_RAM_ATTR SX1280Driver::RXnb(SX1280_RadioOperatingModes_t rxMode, uin
 {
     RFAMP.RXenable();
     SetMode(rxMode, SX12XX_Radio_All, incomingTimeout);
+    // SetMode(SX1280_MODE_RX_CONT, SX12XX_Radio_All, incomingTimeout);
 }
 
 uint8_t ICACHE_RAM_ATTR SX1280Driver::GetRxBufferAddr(SX12XX_Radio_Number_t radioNumber)
@@ -573,11 +574,12 @@ uint8_t ICACHE_RAM_ATTR SX1280Driver::GetRxBufferAddr(SX12XX_Radio_Number_t radi
     return status[1];
 }
 
-void ICACHE_RAM_ATTR SX1280Driver::GetStatus(SX12XX_Radio_Number_t radioNumber)
+uint8_t ICACHE_RAM_ATTR SX1280Driver::GetStatus(SX12XX_Radio_Number_t radioNumber)
 {
     uint8_t status = 0;
     hal.ReadCommand(SX1280_RADIO_GET_STATUS, (uint8_t *)&status, 1, radioNumber);
     DBGLN("Status: %x, %x, %x", (0b11100000 & status) >> 5, (0b00011100 & status) >> 2, 0b00000001 & status);
+    return status;
 }
 
 bool ICACHE_RAM_ATTR SX1280Driver::GetFrequencyErrorbool()

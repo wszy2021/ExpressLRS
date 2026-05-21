@@ -44,6 +44,14 @@
 #define LR1121_POWER_MIN_HF_PA (-18) // High Frequency PA
 #define LR1121_POWER_MAX_HF_PA  (13)
 
+#define LR1121_POWER_MIN_1P5G_PA (-18) // 1.5GHz PA minimum power
+#define LR1121_POWER_MAX_1P5G_PA  (13) // 1.5GHz PA maximum power
+
+#define LR1121_FREQ_SUBGHZ_THRESHOLD  1000000000  // Below 1GHz = Sub-GHz
+#define LR1121_FREQ_1P5G_MIN          1520000000  // 1.4GHz minimum for 1.5GHz band
+#define LR1121_FREQ_1P5G_MAX          1620000000  // 1.6GHz maximum for 1.5GHz band
+#define LR1121_FREQ_2P4G_THRESHOLD    2000000000  // Above 2GHz = 2.4GHz band
+
 #define LR1121_IRQ_TX_DONE 0x00000004
 #define LR1121_IRQ_RX_DONE 0x00000008
 #define LR1121_IRQ_RADIO_NONE 0
@@ -188,6 +196,7 @@ typedef enum
     LR11XX_RADIO_PA_SEL_LP = 0x00,  //!< Low-power Power Amplifier
     LR11XX_RADIO_PA_SEL_HP = 0x01,  //!< High-power Power Amplifier
     LR11XX_RADIO_PA_SEL_HF = 0x02,  //!< High-frequency Power Amplifier
+    LR11XX_RADIO_PA_SEL_1P5G = 0x02,
 } lr11xx_radio_pa_selection_t;
 
 typedef enum

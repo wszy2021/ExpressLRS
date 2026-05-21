@@ -99,6 +99,12 @@ typedef enum : uint8_t
     RATE_FSK_2G4_1000HZ,
     RATE_FSK_900_1000HZ,
     RATE_FSK_900_1000HZ_8CH,
+    // RATE_FSK_1500_500HZ,
+    // RATE_LORA_1500_200HZ,
+    // RATE_LORA_1500_100HZ_8CH,
+    // RATE_LORA_1500_100HZ,
+    // RATE_LORA_1500_50HZ,
+    // RATE_LORA_1500_25HZ,
 } expresslrs_RFrates_e;
 
 enum {
@@ -110,6 +116,8 @@ enum {
     RADIO_TYPE_LR1121_LORA_DUAL,
     RADIO_TYPE_SX128x_LORA,
     RADIO_TYPE_SX128x_FLRC,
+    // RADIO_TYPE_LR1121_LORA_1500,
+    // RADIO_TYPE_LR1121_GFSK_1500,
 };
 
 typedef enum : uint8_t
@@ -131,8 +139,19 @@ typedef enum : uint8_t
 #define SNR_SCALE(snr) ((int8_t)((float)snr * RADIO_SNR_SCALE))
 #define SNR_DESCALE(snrScaled) (snrScaled / RADIO_SNR_SCALE)
 // Bound is any of the last 4 bytes nonzero (unbound is all zeroes)
-#define UID_IS_BOUND(uid) (uid[2] != 0 || uid[3] != 0 || uid[4] != 0 || uid[5] != 0)
+// #define UID_IS_BOUND(uid) (uid[2] != 0 || uid[3] != 0 || uid[4] != 0 || uid[5] != 0)
+#define UID_IS_BOUND(uid) (true)
 
+// 在 common.h 末尾添加
+typedef struct dual_rssi_s {
+    int16_t rssi1;        // 天线1的RSSI值 (dBm)
+    int16_t rssi2;        // 天线2的RSSI值 (dBm)
+    uint8_t active_antenna; // 当前活动天线 (0或1)
+    uint32_t last_update;  // 最后更新时间戳
+} dual_rssi_t;
+ 
+// 添加全局变量声明
+extern dual_rssi_t dualRSSI;
 typedef struct expresslrs_rf_pref_params_s
 {
     uint8_t index;
@@ -278,7 +297,7 @@ enum eAuxChannels : uint8_t
 extern SX127xDriver Radio;
 
 #elif defined(RADIO_LR1121)
-#define RATE_MAX 16
+#define RATE_MAX 22
 #define RATE_BINDING RATE_LORA_50HZ
 #define RATE_DUALBAND_BINDING 9 // 2.4GHz 50Hz
 

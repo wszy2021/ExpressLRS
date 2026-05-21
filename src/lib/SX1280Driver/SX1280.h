@@ -46,7 +46,7 @@ public:
     uint16_t GetIrqStatus(SX12XX_Radio_Number_t radioNumber);
     void ClearIrqStatus(uint16_t irqMask, SX12XX_Radio_Number_t radioNumber);
 
-    void GetStatus(SX12XX_Radio_Number_t radioNumber);
+    uint8_t GetStatus(SX12XX_Radio_Number_t radioNumber);
 
     uint8_t GetRxBufferAddr(SX12XX_Radio_Number_t radioNumber);
     int8_t GetRssiInst(SX12XX_Radio_Number_t radioNumber);

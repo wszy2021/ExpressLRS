@@ -45,6 +45,12 @@ expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     {13, RADIO_TYPE_LR1121_LORA_900,  RATE_LORA_200HZ_8CH,           LR11XX_RADIO_LORA_BW_500,       LR11XX_RADIO_LORA_SF5,    LR11XX_RADIO_LORA_CR_4_7,  8,       LR11XX_RADIO_LORA_BW_500,       LR11XX_RADIO_LORA_SF5,    LR11XX_RADIO_LORA_CR_4_7,  8,  TLM_RATIO_1_64, 4,  5000, OTA8_PACKET_SIZE, 1},
     {14, RADIO_TYPE_LR1121_GFSK_2G4,  RATE_FSK_2G4_DVDA_500HZ, LR11XX_RADIO_GFSK_BITRATE_300k, LR11XX_RADIO_GFSK_BW_467000, LR11XX_RADIO_GFSK_FDEV_100k, 16, LR11XX_RADIO_GFSK_BITRATE_300k, LR11XX_RADIO_GFSK_BW_467000, LR11XX_RADIO_GFSK_FDEV_100k, 16, TLM_RATIO_1_128, 2,  1000, OTA4_PACKET_SIZE, 2},
     {15, RADIO_TYPE_LR1121_GFSK_900,  RATE_FSK_900_1000HZ_8CH, LR11XX_RADIO_GFSK_BITRATE_300k, LR11XX_RADIO_GFSK_BW_467000, LR11XX_RADIO_GFSK_FDEV_100k, 16, LR11XX_RADIO_GFSK_BITRATE_300k, LR11XX_RADIO_GFSK_BW_467000, LR11XX_RADIO_GFSK_FDEV_100k, 16, TLM_RATIO_1_128, 2,  1000, OTA8_PACKET_SIZE, 1}};
+    // {16, RADIO_TYPE_LR1121_GFSK_1500, RATE_FSK_1500_500HZ,    LR11XX_RADIO_GFSK_BITRATE_300k, LR11XX_RADIO_GFSK_BW_467000, LR11XX_RADIO_GFSK_FDEV_100k, 16, LR11XX_RADIO_GFSK_BITRATE_300k, LR11XX_RADIO_GFSK_BW_467000, LR11XX_RADIO_GFSK_FDEV_100k, 16, TLM_RATIO_1_128, 2,  2000, OTA4_PACKET_SIZE, 1},
+    // {17, RADIO_TYPE_LR1121_LORA_1500, RATE_LORA_1500_200HZ,   LR11XX_RADIO_LORA_BW_500,       LR11XX_RADIO_LORA_SF5,       LR11XX_RADIO_LORA_CR_4_8,     8, LR11XX_RADIO_LORA_BW_500,       LR11XX_RADIO_LORA_SF5,       LR11XX_RADIO_LORA_CR_4_8,     8, TLM_RATIO_1_64,  4,  5000, OTA4_PACKET_SIZE, 1},
+    // {18, RADIO_TYPE_LR1121_LORA_1500, RATE_LORA_1500_100HZ_8CH, LR11XX_RADIO_LORA_BW_500,    LR11XX_RADIO_LORA_SF5,       LR11XX_RADIO_LORA_CR_4_7,     8, LR11XX_RADIO_LORA_BW_500,       LR11XX_RADIO_LORA_SF5,       LR11XX_RADIO_LORA_CR_4_7,     8, TLM_RATIO_1_64,  4, 10000, OTA8_PACKET_SIZE, 1},
+    // {19, RADIO_TYPE_LR1121_LORA_1500, RATE_LORA_1500_100HZ,   LR11XX_RADIO_LORA_BW_500,       LR11XX_RADIO_LORA_SF6,       LR11XX_RADIO_LORA_CR_4_7,     8, LR11XX_RADIO_LORA_BW_500,       LR11XX_RADIO_LORA_SF6,       LR11XX_RADIO_LORA_CR_4_7,     8, TLM_RATIO_1_32,  4, 10000, OTA4_PACKET_SIZE, 1},
+    // {20, RADIO_TYPE_LR1121_LORA_1500, RATE_LORA_1500_50HZ,    LR11XX_RADIO_LORA_BW_500,       LR11XX_RADIO_LORA_SF7,       LR11XX_RADIO_LORA_CR_4_7,     8, LR11XX_RADIO_LORA_BW_500,       LR11XX_RADIO_LORA_SF7,       LR11XX_RADIO_LORA_CR_4_7,     8, TLM_RATIO_1_16,  2, 20000, OTA4_PACKET_SIZE, 1},
+    // {21, RADIO_TYPE_LR1121_LORA_1500, RATE_LORA_1500_25HZ,    LR11XX_RADIO_LORA_BW_500,       LR11XX_RADIO_LORA_SF8,       LR11XX_RADIO_LORA_CR_4_7,    10, LR11XX_RADIO_LORA_BW_500,       LR11XX_RADIO_LORA_SF8,       LR11XX_RADIO_LORA_CR_4_7,    10, TLM_RATIO_1_8,   2, 40000, OTA4_PACKET_SIZE, 1},};
 
 expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
     {0,  -112,  4380, 3000, 2500, 600,  5000, SNR_SCALE( 1), SNR_SCALE(3.0)}, // These SNR_SCALE values all need to be checked!
@@ -63,6 +69,13 @@ expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
     {13, -111,  4240, 3500, 2500, 600,  5000, SNR_SCALE( 1), SNR_SCALE(3.0)},
     {14, -103,   690, 2500, 2500,   3,  5000, DYNPOWER_SNR_THRESH_NONE, DYNPOWER_SNR_THRESH_NONE},
     {15, -101,   658, 2500, 2500,   3,  5000, DYNPOWER_SNR_THRESH_NONE, DYNPOWER_SNR_THRESH_NONE}};
+    // {16, -105,   690, 2500, 2500,   3,  5000, DYNPOWER_SNR_THRESH_NONE, DYNPOWER_SNR_THRESH_NONE},
+    // {17, -112,  3216, 3500, 2500, 600,  5000, SNR_SCALE( 1), SNR_SCALE(3.0)},
+    // {18, -112,  4240, 3500, 2500, 600,  5000, SNR_SCALE( 1), SNR_SCALE(3.0)},
+    // {19, -117,  8770, 3500, 2500, 600,  5000, SNR_SCALE( 1), SNR_SCALE(2.5)},
+    // {20, -120, 18560, 4000, 2500, 600,  5000, SNR_SCALE(-1), SNR_SCALE(1.5)},
+    // {21, -123, 29950, 6000, 4000, 600,  5000, SNR_SCALE(-3), SNR_SCALE(0.5)},};
+
 #endif
 
 #if defined(RADIO_SX128X)
@@ -147,12 +160,13 @@ uint8_t ICACHE_RAM_ATTR enumRatetoIndex(expresslrs_RFrates_e const eRate)
 }
 
 // Connection state information
-uint8_t UID[UID_LEN] = {0};  // "bind phrase" ID
+uint8_t UID[UID_LEN] = {0xff,0xff,0xff,0xff,0xff,0xff};  // "bind phrase" ID
 bool connectionHasModelMatch = false;
 bool teamraceHasModelMatch = true; // true if isTx or teamrace disabled or (enabled and channel in correct postion)
 bool InBindingMode = false;
 uint8_t ExpressLRS_currTlmDenom = 1;
-connectionState_e connectionState = disconnected;
+// connectionState_e connectionState = disconnected;
+connectionState_e connectionState = connected;
 expresslrs_mod_settings_s *ExpressLRS_currAirRate_Modparams = nullptr;
 expresslrs_rf_pref_params_s *ExpressLRS_currAirRate_RFperfParams = nullptr;
 
@@ -229,6 +243,11 @@ bool isSupportedRFRate(uint8_t index)
     {
         return false;
     }
+    // 1.5GHz modes not supported for hardware with no 1.5GHz power values
+    // if (POWER_OUTPUT_VALUES_DUAL_COUNT == 0 && (ModParams->radio_type == RADIO_TYPE_LR1121_LORA_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500))
+    // {
+    //     return false;
+    // }
     return true;
 }
 #endif

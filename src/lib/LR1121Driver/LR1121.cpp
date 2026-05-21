@@ -137,6 +137,41 @@ void LR1121Driver::startCWTest(uint32_t freq, SX12XX_Radio_Number_t radioNumber)
     hal.WriteCommand(LR11XX_RADIO_SET_TX_CW_OC, radioNumber);
 }
 
+static inline uint8_t getFreqBandType(uint32_t regfreq)
+{
+    if (regfreq < 1000000000) {
+        return 0; // Sub-GHz
+    } else if (regfreq >= LR1121_FREQ_1P5G_MIN && regfreq <= LR1121_FREQ_1P5G_MAX) {
+        return 1; // 1.5GHz band
+    } else {
+        return 2; // 2.4GHz
+    }
+}
+
+/**
+ * @brief Check if frequency is in Sub-GHz band (excluding 1.5GHz)
+ */
+static inline bool isSubGHzBand(uint32_t regfreq)
+{
+    return regfreq < 1000000000;
+}
+
+/**
+ * @brief Check if frequency is in 1.5GHz band
+ */
+static inline bool is1P5GBand(uint32_t regfreq)
+{
+    return (regfreq >= LR1121_FREQ_1P5G_MIN && regfreq <= LR1121_FREQ_1P5G_MAX);
+}
+
+/**
+ * @brief Check if frequency is in 2.4GHz band
+ */
+static inline bool is2G4Band(uint32_t regfreq)
+{
+    return regfreq >= LR1121_FREQ_2P4G_THRESHOLD;
+}
+
 void LR1121Driver::Config(uint8_t bw, uint8_t sf, uint8_t cr, uint32_t regfreq,
                           uint8_t PreambleLength, bool InvertIQ, uint8_t _PayloadLength, uint32_t interval,
                           bool setFSKModulation, uint8_t fskSyncWord1, uint8_t fskSyncWord2,
@@ -145,6 +180,7 @@ void LR1121Driver::Config(uint8_t bw, uint8_t sf, uint8_t cr, uint32_t regfreq,
     PayloadLength = _PayloadLength;
     
     bool isSubGHz = regfreq < 1000000000;
+    bool is1P5G = is1P5GBand(regfreq);
 
     if (radioNumber & SX12XX_Radio_1)
         radio1isSubGHz = isSubGHz;
@@ -179,7 +215,7 @@ void LR1121Driver::Config(uint8_t bw, uint8_t sf, uint8_t cr, uint32_t regfreq,
         ConfigModParamsFSK(bitrate, bwf, fdev, radioNumber);
 
         // Increase packet length for FEC used only on 1000Hz 2.5GHz.
-        if (!isSubGHz)
+        if (!isSubGHz && !is1P5G)
         {
             useFEC = true;
             PayloadLength = 14;
@@ -206,7 +242,7 @@ void LR1121Driver::Config(uint8_t bw, uint8_t sf, uint8_t cr, uint32_t regfreq,
 
     ClearIrqStatus(radioNumber);
 
-    SetPaConfig(isSubGHz, radioNumber); // Must be called after changing rf modes between subG and 2.4G.  This sets the correct rf amps, and txen pins to be used.
+    SetPaConfig(isSubGHz, is1P5G, radioNumber); // Must be called after changing rf modes between subG and 2.4G.  This sets the correct rf amps, and txen pins to be used.
     CommitOutputPower();
 }
 
@@ -388,7 +424,7 @@ void ICACHE_RAM_ATTR LR1121Driver::WriteOutputPower(uint8_t power, bool isSubGHz
     hal.WriteCommand(LR11XX_RADIO_SET_TX_PARAMS_OC, Txbuf, sizeof(Txbuf), radioNumber);
 }
 
-void ICACHE_RAM_ATTR LR1121Driver::SetPaConfig(bool isSubGHz, SX12XX_Radio_Number_t radioNumber)
+void ICACHE_RAM_ATTR LR1121Driver::SetPaConfig(bool isSubGHz, bool is1P5G, SX12XX_Radio_Number_t radioNumber)
 {
     uint8_t Pabuf[4] = {0};
 
@@ -414,6 +450,16 @@ void ICACHE_RAM_ATTR LR1121Driver::SetPaConfig(bool isSubGHz, SX12XX_Radio_Numbe
             Pabuf[2] = 0x04; // PaDutyCycle
             Pabuf[3] = 0x07; // PaHPSel - In order to reach +22dBm output power, PaHPSel must be set to 7. PaHPSel has no impact on either the low power PA or the high frequency PA.
         }
+    }
+    else if (is1P5G)
+    {
+        // 1.5GHz RF Amp - uses HF PA configuration
+        // Table 9-3: Optimized Settings for HF PA (same as 2.4GHz)
+        // -18dBm (0xEE) to +13dBm (0x0D) by steps of 1dB if the high frequency PA is selected
+        Pabuf[0] = LR11XX_RADIO_PA_SEL_HF; // PaSel - 0x02: Selects the high frequency PA
+        Pabuf[1] = LR11XX_RADIO_PA_REG_SUPPLY_VREG; // RegPaSupply - 0x00: Powers the PA from main regulator
+        Pabuf[2] = 0x00; // PaDutyCycle
+        Pabuf[3] = 0x00; // PaHPSel - Not used for HF PA
     }
     // 2.4G RF Amp
     // Table 9-3: Optimized Settings for HF PA with the Same Matching Network

@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "functional": "cpp",
+        "cassert": "cpp",
+        "algorithm": "cpp",
+        "iostream": "cpp"
+    }
+}

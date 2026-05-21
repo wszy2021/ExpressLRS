@@ -89,5 +89,5 @@ private:
     void TXnbISR(); // ISR for non-blocking TX routine
     void CommitOutputPower();
     void WriteOutputPower(uint8_t pwr, bool isSubGHz, SX12XX_Radio_Number_t radioNumber);
-    void SetPaConfig(bool isSubGHz, SX12XX_Radio_Number_t radioNumber);
+    void SetPaConfig(bool isSubGHz, bool is1P5G, SX12XX_Radio_Number_t radioNumber);
 };
