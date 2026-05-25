@@ -260,12 +260,14 @@ static uint32_t BindingRateChangeTime;
 #endif
 #define BindingRateChangeCyclePeriod 125
 
+#if defined(INTERFERENCE_LOCATOR_RX)
 dual_rssi_t dualRSSI = {0, 0, 0, 0};
+#endif
 
 
 extern void setWifiUpdateMode();
 void reconfigureSerial();
-
+extern void SetRFLinkRate(uint8_t index, bool bindMode);
 
 // void updateRSSIScan()
 // {
@@ -299,6 +301,108 @@ static inline void checkGeminiMode()
     }
 }
 
+#if defined(INTERFERENCE_LOCATOR_RX)
+static bool interferenceLocatorBothAntennasWeak()
+{
+    return dualRSSI.rssi1 <= INTERFERENCE_RSSI_WEAK_THRESHOLD_DBM &&
+           dualRSSI.rssi2 <= INTERFERENCE_RSSI_WEAK_THRESHOLD_DBM;
+}
+
+static uint8_t getBest2G4LocatorRateIdx()
+{
+    static const expresslrs_RFrates_e preferredRates[] = {
+        RATE_LORA_50HZ,
+        RATE_LORA_100HZ_8CH,
+        RATE_LORA_150HZ,
+        RATE_LORA_250HZ,
+        RATE_LORA_500HZ,
+    };
+
+    for (expresslrs_RFrates_e rate : preferredRates)
+    {
+        uint8_t idx = enumRatetoIndex(rate);
+        if (!isSupportedRFRate(idx))
+            continue;
+#if defined(RADIO_LR1121)
+        if (get_elrs_airRateConfig(idx)->radio_type != RADIO_TYPE_LR1121_LORA_2G4)
+            continue;
+#endif
+        return idx;
+    }
+
+    return enumRatetoIndex(RATE_LORA_500HZ);
+}
+
+static void updateInterferenceLocatorLinkStats()
+{
+    connectionState = connected;
+    connectionHasModelMatch = true;
+    teamraceHasModelMatch = true;
+
+    int16_t bestRssi = max(dualRSSI.rssi1, dualRSSI.rssi2);
+    dualRSSI.active_antenna = (dualRSSI.rssi1 >= dualRSSI.rssi2) ? 0 : 1;
+
+    CRSF::LinkStatistics.active_antenna = dualRSSI.active_antenna;
+    CRSF::LinkStatistics.uplink_RSSI_1 = -dualRSSI.rssi1;
+    CRSF::LinkStatistics.uplink_RSSI_2 = -dualRSSI.rssi2;
+
+    if (ExpressLRS_currAirRate_RFperfParams != nullptr)
+    {
+        CRSF::LinkStatistics.uplink_Link_quality = map(
+            constrain(-bestRssi, ExpressLRS_currAirRate_RFperfParams->RXsensitivity, -50),
+            ExpressLRS_currAirRate_RFperfParams->RXsensitivity, -50, 0, 100);
+        CRSF::LinkStatistics.rf_Mode = ExpressLRS_currAirRate_Modparams->enum_rate;
+    }
+}
+
+static void pollDualAntennaRSSI()
+{
+    if (!isDualRadio())
+        return;
+
+    int8_t r1 = Radio.GetRssiInst(SX12XX_Radio_1);
+    int8_t r2 = Radio.GetRssiInst(SX12XX_Radio_2);
+
+    dualRSSI.rssi1 = LPF_UplinkRSSI0.update(r1);
+    dualRSSI.rssi2 = LPF_UplinkRSSI1.update(r2);
+    dualRSSI.last_update = millis();
+
+#if defined(DEBUG_LOG)
+    static uint32_t lastRssiLogMs = 0;
+    uint32_t now = millis();
+    if (now - lastRssiLogMs >= 200)
+    {
+        lastRssiLogMs = now;
+        DBGLN("RSSI ant1=%d ant2=%d delta=%d", dualRSSI.rssi1, dualRSSI.rssi2, dualRSSI.rssi1 - dualRSSI.rssi2);
+    }
+#endif
+}
+
+static void setupInterferenceLocatorRadio()
+{
+    LockRFmode = true;
+
+    uint8_t rateIdx = getBest2G4LocatorRateIdx();
+    SetRFLinkRate(rateIdx, false);
+    FHSSsetCurrIndex(0);
+
+    // Max TX power for telemetry back to handset / FC link-stat path
+    POWERMGNT::setPower(POWERMGNT::getMaxPower());
+
+    uint32_t freq = FHSSgetInitialFreq();
+    Radio.SetFrequencyReg(freq, SX12XX_Radio_1);
+    if (isDualRadio())
+    {
+        Radio.SetFrequencyReg(freq, SX12XX_Radio_2);
+    }
+    Radio.RXnb();
+
+    SendLinkStatstoFCForcedSends = 5;
+
+    DBGLN("Interference locator: rate=%u freq=%u pwr=%u", rateIdx, freq, POWERMGNT::currPower());
+}
+#endif
+
 static uint8_t minLqForChaos()
 {
     // Determine the most number of CRC-passing packets we could receive on
@@ -317,6 +421,15 @@ static uint8_t minLqForChaos()
 
 void ICACHE_RAM_ATTR getRFlinkInfo()
 {
+#if defined(INTERFERENCE_LOCATOR_RX)
+    pollDualAntennaRSSI();
+    if (!interferenceLocatorBothAntennasWeak())
+    {
+        updateInterferenceLocatorLinkStats();
+    }
+    return;
+#endif
+
     int32_t rssiDBM = Radio.LastPacketRSSI;
 
     if (GPIO_PIN_NSS_2 != UNDEF_PIN)
@@ -329,12 +442,6 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
         #endif
         rssiDBM = (rssiDBM > 0) ? 0 : rssiDBM;
         rssiDBM2 = (rssiDBM2 > 0) ? 0 : rssiDBM2;
-
-        // 更新双天线RSSI结构
-        dualRSSI.rssi1 = -rssiDBM;
-        dualRSSI.rssi2 = -rssiDBM2;
-        dualRSSI.active_antenna = (Radio.GetProcessingPacketRadio() == SX12XX_Radio_1) ? 0 : 1;
-        dualRSSI.last_update = millis();
 
         // BetaFlight/iNav expect positive values for -dBm (e.g. -80dBm -> sent as 80)
         CRSF::LinkStatistics.uplink_RSSI_1 = -rssiDBM;
@@ -351,19 +458,9 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
         // BetaFlight/iNav expect positive values for -dBm (e.g. -80dBm -> sent as 80)
         CRSF::LinkStatistics.uplink_RSSI_1 = -rssiDBM;
         CRSF::LinkStatistics.uplink_RSSI_2 = -rssiDBM;
-        dualRSSI.rssi1 = -rssiDBM;
-        dualRSSI.rssi2 = -rssiDBM;
-        // CRSF::LinkStatistics.active_antenna = 2;
     }
     else
     {
-         // 单天线模式下的处理
-        dualRSSI.rssi1 = -rssiDBM;
-        dualRSSI.rssi2 = -rssiDBM;
-        // dualRSSI.rssi2 = -127; // 无效值
-        dualRSSI.active_antenna = antenna;
-        
-
         #if !defined(DEBUG_RCVR_LINKSTATS)
         rssiDBM = LPF_UplinkRSSI1.update(rssiDBM);
         #endif
@@ -374,17 +471,6 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
         CRSF::LinkStatistics.uplink_RSSI_1 = -rssiDBM;
         // CRSF::LinkStatistics.active_antenna = 3;
     }
-    // uint8_t status1 = Radio.GetStatus(SX12XX_Radio_1);
-    // uint8_t status2 = Radio.GetStatus(SX12XX_Radio_2);
-    dualRSSI.rssi1 = Radio.GetRssiInst(SX12XX_Radio_1);
-    dualRSSI.rssi2 = Radio.GetRssiInst(SX12XX_Radio_2);
-    dualRSSI.rssi1 = LPF_UplinkRSSI0.update(dualRSSI.rssi1);
-    dualRSSI.rssi2 = LPF_UplinkRSSI1.update(dualRSSI.rssi2);
-    dualRSSI.rssi1 = (dualRSSI.rssi1 > 0) ? 0 : dualRSSI.rssi1;
-    dualRSSI.rssi2 = (dualRSSI.rssi2 > 0) ? 0 : dualRSSI.rssi2;
-    CRSF::LinkStatistics.uplink_RSSI_1 = -dualRSSI.rssi1;
-    CRSF::LinkStatistics.uplink_RSSI_2 = -dualRSSI.rssi2;
-
     SnrMean.add(Radio.LastPacketSNRRaw);
 
     CRSF::LinkStatistics.active_antenna = antenna;
@@ -467,6 +553,10 @@ void SetRFLinkRate(uint8_t index, bool bindMode) // Set speed of RF link
 
 bool ICACHE_RAM_ATTR HandleFHSS()
 {
+#if defined(INTERFERENCE_LOCATOR_RX)
+    return false;
+#endif
+
     uint8_t modresultFHSS = (OtaNonce + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
 
     if ((ExpressLRS_currAirRate_Modparams->FHSShopInterval == 0) || alreadyFHSS == true || InBindingMode || (modresultFHSS != 0) || (connectionState == disconnected))
@@ -867,9 +957,11 @@ void ICACHE_RAM_ATTR HWtimerCallbackTock()
     {
         if (LQCalcDVDA.currentIsSet())
         {
+#if !defined(INTERFERENCE_LOCATOR_RX)
             crsfRCFrameAvailable();
             if (teamraceHasModelMatch)
                 servoNewChannelsAvailable();
+#endif
         }
         else
         {
@@ -912,8 +1004,11 @@ void LostConnection(bool resumeRx)
         config.SetRateInitialIdx(ExpressLRS_nextAirRateIndex);
 
     RFmodeCycleMultiplier = 1;
-    // connectionState = disconnected; //set lost connection
+#if defined(INTERFERENCE_LOCATOR_RX)
     connectionState = connected;
+#else
+    connectionState = disconnected; //set lost connection
+#endif
     RXtimerState = tim_disconnected;
     hwTimer::resetFreqOffset();
     PfdPrevRawOffset = 0;
@@ -945,10 +1040,13 @@ void LostConnection(bool resumeRx)
 void ICACHE_RAM_ATTR TentativeConnection(unsigned long now)
 {
     PFDloop.reset();
-    // connectionState = tentative;
-    connectionState = connected; // Set to connected immediately to allow processing of RC packets and telemetry during the tentative period, which allows for faster lock and better performance when signal is weak.  The connection will be set to disconnected at the end of the tentative period if lock isn't achieved.
-    // connectionHasModelMatch = false;
+#if defined(INTERFERENCE_LOCATOR_RX)
+    connectionState = connected;
     connectionHasModelMatch = true;
+#else
+    connectionState = tentative;
+    connectionHasModelMatch = false;
+#endif
     RXtimerState = tim_disconnected;
     DBGLN("tentative conn");
     PfdPrevRawOffset = 0;
@@ -1002,11 +1100,11 @@ static void ICACHE_RAM_ATTR ProcessRfPacket_RC(OTA_Packet_s const * const otaPkt
     {
         if (ExpressLRS_currAirRate_Modparams->numOfSends == 1)
         {
+#if !defined(INTERFERENCE_LOCATOR_RX)
             crsfRCFrameAvailable();
-            // teamrace is only checked for servos because the teamrace model select logic only runs
-            // when new frames are available, and will decide later if the frame will be forwarded
-            // if (teamraceHasModelMatch)
+            if (teamraceHasModelMatch)
                 servoNewChannelsAvailable();
+#endif
         }
         else if (!LQCalcDVDA.currentIsSet())
         {
@@ -1124,15 +1222,17 @@ static void ICACHE_RAM_ATTR updateSwitchModePendingFromOta(uint8_t newSwitchMode
 
 static bool ICACHE_RAM_ATTR ProcessRfPacket_SYNC(uint32_t const now, OTA_Sync_s const * const otaSync)
 {
+#if !defined(INTERFERENCE_LOCATOR_RX)
     // Verify the first two of three bytes of the binding ID, which should always match
-    // if (otaSync->UID3 != UID[3] || otaSync->UID4 != UID[4])
-    //     return false;
+    if (otaSync->UID3 != UID[3] || otaSync->UID4 != UID[4])
+        return false;
 
     // The third byte will be XORed with inverse of the ModelId if ModelMatch is on
     // Only require the first 18 bits of the UID to match to establish a connection
     // but the last 6 bits must modelmatch before sending any data to the FC
-    // if ((otaSync->UID5 & ~MODELMATCH_MASK) != (UID[5] & ~MODELMATCH_MASK))
-    //     return false;
+    if ((otaSync->UID5 & ~MODELMATCH_MASK) != (UID[5] & ~MODELMATCH_MASK))
+        return false;
+#endif
 
     LastSyncPacket = now;
 #if defined(DEBUG_RX_SCOREBOARD)
@@ -1157,7 +1257,9 @@ static bool ICACHE_RAM_ATTR ProcessRfPacket_SYNC(uint32_t const now, OTA_Sync_s 
     uint8_t modelXor = (~config.GetModelId()) & MODELMATCH_MASK;
     bool modelMatched = otaSync->UID5 == (UID[5] ^ modelXor);
     DBGVLN("MM %u=%u %d", otaSync->UID5, UID[5], modelMatched);
+#if defined(INTERFERENCE_LOCATOR_RX)
     modelMatched = true;
+#endif
 
     if (connectionState == disconnected
         || OtaNonce != otaSync->nonce
@@ -1722,13 +1824,17 @@ static void setupBindingFromConfig()
     // which makes the RX boot into bind mode every time
     if (config.GetIsBound())
     {
-        // memcpy(UID, config.GetUID(), UID_LEN);
+#if !defined(INTERFERENCE_LOCATOR_RX)
+        memcpy(UID, config.GetUID(), UID_LEN);
+#endif
     }
 
     DBGLN("UID=(%d, %d, %d, %d, %d, %d) ModelId=%u",
         UID[0], UID[1], UID[2], UID[3], UID[4], UID[5], config.GetModelId());
 
-    // OtaUpdateCrcInitFromUid();
+#if !defined(INTERFERENCE_LOCATOR_RX)
+    OtaUpdateCrcInitFromUid();
+#endif
 }
 
 static void setupRadio()
@@ -1788,8 +1894,12 @@ static void updateTelemetryBurst()
  */
 static void cycleRfMode(unsigned long now)
 {
-    // if (connectionState == connected || connectionState == wifiUpdate || InBindingMode)
-    //     return;
+#if defined(INTERFERENCE_LOCATOR_RX)
+    return;
+#endif
+
+    if (connectionState == connected || connectionState == wifiUpdate || InBindingMode)
+        return;
 
     // Actually cycle the RF mode if not LOCK_ON_FIRST_CONNECTION
     if (LockRFmode == false && (now - RFmodeLastCycled) > (cycleInterval * RFmodeCycleMultiplier))
@@ -1960,6 +2070,10 @@ static void updateBindingMode(unsigned long now)
 
 void EnterBindingModeSafely()
 {
+#if defined(INTERFERENCE_LOCATOR_RX)
+    return;
+#endif
+
     // Will not enter Binding mode if in the process of a passthrough update
     // or currently binding
     if (connectionState == serialUpdate || InBindingMode)
@@ -1994,29 +2108,28 @@ static void checkSendLinkStatsToFc(uint32_t now)
 {
     if (now - SendLinkStatstoFCintervalLastSent > SEND_LINK_STATS_TO_FC_INTERVAL)
     {
-        // if (connectionState == disconnected)
-        // {
-            getRFlinkInfo();
-        // }
-        // int32_t rss1 = Radio.GetRssiInst(SX12XX_Radio_1);
-        // int32_t rss2 = Radio.GetRssiInst(SX12XX_Radio_2);
-        // if((-rss1 >= 80) && (-rss2 >= 80)) {
-        //     return;
-        // }
-        if(-dualRSSI.rssi1 >= 70 && -dualRSSI.rssi2 >= 70) {
+#if defined(INTERFERENCE_LOCATOR_RX)
+        pollDualAntennaRSSI();
+        if (interferenceLocatorBothAntennasWeak())
+        {
             return;
         }
+        updateInterferenceLocatorLinkStats();
+        serialIO->queueLinkStatisticsPacket();
+        SendLinkStatstoFCintervalLastSent = now;
+#else
         // Only send link stats if we have a somewhat decent signal, otherwise the FC might be getting old/stale info and it's better to not send anything at all
-        // if ((connectionState != disconnected && connectionHasModelMatch && teamraceHasModelMatch) ||
-        //     SendLinkStatstoFCForcedSends)
-        // if (connectionState != disconnected)
+        if ((connectionState != disconnected && connectionHasModelMatch && teamraceHasModelMatch) ||
+            SendLinkStatstoFCForcedSends)
         {
+            getRFlinkInfo();
             serialIO->queueLinkStatisticsPacket();
             SendLinkStatstoFCintervalLastSent = now;
             if (SendLinkStatstoFCForcedSends)
                 --SendLinkStatstoFCForcedSends;
         }
-        // crsfRCFrameAvailable();
+        return;
+#endif
     }
 }
 
@@ -2233,25 +2346,28 @@ void setup()
 
             MspReceiver.SetDataToReceive(MspData, ELRS_MSP_BUFFER);
             Radio.RXnb();
-            // delay(1);
+#if !defined(INTERFERENCE_LOCATOR_RX)
             hwTimer::init(HWtimerCallbackTick, HWtimerCallbackTock);
+#endif
         }
     }
-    // ==================== 监听模式初始化 ====================
-    // 直接设置为已连接状态，跳过绑定检查
+
+#if defined(INTERFERENCE_LOCATOR_RX)
     connectionState = connected;
     RXtimerState = tim_tentative;
-    connectionHasModelMatch = true;  // 跳过Model Match检查
-    teamraceHasModelMatch = true;   // 跳过Teamrace检查
-    InBindingMode = false;          // 禁用绑定模式
-    config.SetPowerOnCounter(0);    // 重置绑定计数器
-    // devicesTriggerEvent();              // 触发设备事件，确保系统状态更新
-    // 确保不会进入绑定模式
+    connectionHasModelMatch = true;
+    teamraceHasModelMatch = true;
+    InBindingMode = false;
     BindingModeRequest = false;
-    
-// ==================== 监听模式初始化结束 ====================
+    config.SetPowerOnCounter(0);
+    if (connectionState != radioFailed)
+    {
+        setupInterferenceLocatorRadio();
+        updateInterferenceLocatorLinkStats();
+    }
+#endif
 
-#if defined(HAS_BUTTON)
+#if defined(HAS_BUTTON) && !defined(INTERFERENCE_LOCATOR_RX)
     registerButtonFunction(ACTION_BIND, EnterBindingModeSafely);
     registerButtonFunction(ACTION_RESET_REBOOT, resetConfigAndReboot);
 #endif
@@ -2371,7 +2487,9 @@ void loop()
 #endif
 
     updateTelemetryBurst();
-    // updateBindingMode(now);
+#if !defined(INTERFERENCE_LOCATOR_RX)
+    updateBindingMode(now);
+#endif
     updateSwitchMode();
     checkGeminiMode();
     DynamicPower_UpdateRx(false);

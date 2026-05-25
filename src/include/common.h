@@ -139,19 +139,27 @@ typedef enum : uint8_t
 #define SNR_SCALE(snr) ((int8_t)((float)snr * RADIO_SNR_SCALE))
 #define SNR_DESCALE(snrScaled) (snrScaled / RADIO_SNR_SCALE)
 // Bound is any of the last 4 bytes nonzero (unbound is all zeroes)
-// #define UID_IS_BOUND(uid) (uid[2] != 0 || uid[3] != 0 || uid[4] != 0 || uid[5] != 0)
+#if defined(INTERFERENCE_LOCATOR_RX)
 #define UID_IS_BOUND(uid) (true)
+#else
+#define UID_IS_BOUND(uid) (uid[2] != 0 || uid[3] != 0 || uid[4] != 0 || uid[5] != 0)
+#endif
 
-// 在 common.h 末尾添加
+#if defined(INTERFERENCE_LOCATOR_RX)
 typedef struct dual_rssi_s {
     int16_t rssi1;        // 天线1的RSSI值 (dBm)
     int16_t rssi2;        // 天线2的RSSI值 (dBm)
     uint8_t active_antenna; // 当前活动天线 (0或1)
     uint32_t last_update;  // 最后更新时间戳
 } dual_rssi_t;
- 
-// 添加全局变量声明
+
 extern dual_rssi_t dualRSSI;
+
+// Filter: skip Betaflight updates when both antennas are at or below this (dBm)
+#ifndef INTERFERENCE_RSSI_WEAK_THRESHOLD_DBM
+#define INTERFERENCE_RSSI_WEAK_THRESHOLD_DBM (-80)
+#endif
+#endif
 typedef struct expresslrs_rf_pref_params_s
 {
     uint8_t index;

@@ -165,8 +165,11 @@ bool connectionHasModelMatch = false;
 bool teamraceHasModelMatch = true; // true if isTx or teamrace disabled or (enabled and channel in correct postion)
 bool InBindingMode = false;
 uint8_t ExpressLRS_currTlmDenom = 1;
-// connectionState_e connectionState = disconnected;
+#if defined(INTERFERENCE_LOCATOR_RX)
 connectionState_e connectionState = connected;
+#else
+connectionState_e connectionState = disconnected;
+#endif
 expresslrs_mod_settings_s *ExpressLRS_currAirRate_Modparams = nullptr;
 expresslrs_rf_pref_params_s *ExpressLRS_currAirRate_RFperfParams = nullptr;
 

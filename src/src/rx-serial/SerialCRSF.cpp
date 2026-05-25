@@ -59,6 +59,13 @@ void SerialCRSF::queueLinkStatisticsPacket()
 
 uint32_t SerialCRSF::sendRCFrame(bool frameAvailable, bool frameMissed, uint32_t *channelData)
 {
+#if defined(INTERFERENCE_LOCATOR_RX)
+    // Interference locator: Link Statistics only, no RC channels to the FC
+    (void)frameAvailable;
+    (void)frameMissed;
+    (void)channelData;
+    return DURATION_NEVER;
+#else
     if (!frameAvailable)
         return DURATION_IMMEDIATELY;
 
@@ -78,22 +85,18 @@ uint32_t SerialCRSF::sendRCFrame(bool frameAvailable, bool frameMissed, uint32_t
     PackedRCdataOut.ch12 = channelData[12];
     PackedRCdataOut.ch13 = channelData[13];
 
-    // In 16ch mode, do not output RSSI/LQ on channels
-    // if (OtaIsFullRes && OtaSwitchModeCurrent == smHybridOr16ch)
-    // {
-    //     // PackedRCdataOut.ch14 = channelData[14];
-    //     PackedRCdataOut.ch14 = dualRSSI.rssi1;
-    //     PackedRCdataOut.ch15 = dualRSSI.rssi2;
-    // }
-    // else
+    if (OtaIsFullRes && OtaSwitchModeCurrent == smHybridOr16ch)
+    {
+        PackedRCdataOut.ch14 = channelData[14];
+        PackedRCdataOut.ch15 = channelData[15];
+    }
+    else
     {
         // Not in 16-channel mode, send LQ and RSSI dBm
-        // int32_t rssiDBM = CRSF::LinkStatistics.active_antenna == 0 ? -CRSF::LinkStatistics.uplink_RSSI_1 : -CRSF::LinkStatistics.uplink_RSSI_2;
+        int32_t rssiDBM = CRSF::LinkStatistics.active_antenna == 0 ? -CRSF::LinkStatistics.uplink_RSSI_1 : -CRSF::LinkStatistics.uplink_RSSI_2;
 
-        // PackedRCdataOut.ch14 = UINT10_to_CRSF(fmap(CRSF::LinkStatistics.uplink_Link_quality, 0, 100, 0, 1023));
-        PackedRCdataOut.ch14 = UINT10_to_CRSF(map(constrain(-dualRSSI.rssi1, ExpressLRS_currAirRate_RFperfParams->RXsensitivity, -50),
-                                                   ExpressLRS_currAirRate_RFperfParams->RXsensitivity, -50, 0, 1023));
-        PackedRCdataOut.ch15 = UINT10_to_CRSF(map(constrain(-dualRSSI.rssi2, ExpressLRS_currAirRate_RFperfParams->RXsensitivity, -50),
+        PackedRCdataOut.ch14 = UINT10_to_CRSF(fmap(CRSF::LinkStatistics.uplink_Link_quality, 0, 100, 0, 1023));
+        PackedRCdataOut.ch15 = UINT10_to_CRSF(map(constrain(rssiDBM, ExpressLRS_currAirRate_RFperfParams->RXsensitivity, -50),
                                                    ExpressLRS_currAirRate_RFperfParams->RXsensitivity, -50, 0, 1023));
     }
 
@@ -111,6 +114,7 @@ uint32_t SerialCRSF::sendRCFrame(bool frameAvailable, bool frameMissed, uint32_t
     _outputPort->write((byte *)&PackedRCdataOut, sizeof(PackedRCdataOut));
     _outputPort->write(crc);
     return DURATION_IMMEDIATELY;
+#endif
 }
 
 void SerialCRSF::queueMSPFrameTransmission(uint8_t* data)

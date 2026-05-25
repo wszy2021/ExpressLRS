@@ -67,6 +67,8 @@ def process_json_flag(define):
         json_flags['unlock-higher-power'] = True
     if define == "-DLOCK_ON_FIRST_CONNECTION" and isRX:
         json_flags['lock-on-first-connection'] = True
+    if define == "-DINTERFERENCE_LOCATOR_RX" and isRX:
+        json_flags['interference-locator-rx'] = True
 
 def process_build_flag(define):
     if define.startswith("-D") or define.startswith("!-D"):
