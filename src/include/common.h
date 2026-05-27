@@ -99,12 +99,12 @@ typedef enum : uint8_t
     RATE_FSK_2G4_1000HZ,
     RATE_FSK_900_1000HZ,
     RATE_FSK_900_1000HZ_8CH,
-    // RATE_FSK_1500_500HZ,
-    // RATE_LORA_1500_200HZ,
-    // RATE_LORA_1500_100HZ_8CH,
-    // RATE_LORA_1500_100HZ,
-    // RATE_LORA_1500_50HZ,
-    // RATE_LORA_1500_25HZ,
+    RATE_FSK_1500_500HZ,
+    RATE_LORA_1500_200HZ,
+    RATE_LORA_1500_100HZ_8CH,
+    RATE_LORA_1500_100HZ,
+    RATE_LORA_1500_50HZ,
+    RATE_LORA_1500_25HZ,
 } expresslrs_RFrates_e;
 
 enum {
@@ -116,8 +116,8 @@ enum {
     RADIO_TYPE_LR1121_LORA_DUAL,
     RADIO_TYPE_SX128x_LORA,
     RADIO_TYPE_SX128x_FLRC,
-    // RADIO_TYPE_LR1121_LORA_1500,
-    // RADIO_TYPE_LR1121_GFSK_1500,
+    RADIO_TYPE_LR1121_LORA_1500,
+    RADIO_TYPE_LR1121_GFSK_1500,
 };
 
 typedef enum : uint8_t
@@ -306,8 +306,12 @@ extern SX127xDriver Radio;
 
 #elif defined(RADIO_LR1121)
 #define RATE_MAX 22
+#if defined(Regulatory_Domain_1500)
+#define RATE_BINDING RATE_LORA_1500_50HZ
+#else
 #define RATE_BINDING RATE_LORA_50HZ
 #define RATE_DUALBAND_BINDING 9 // 2.4GHz 50Hz
+#endif
 
 extern LR1121Driver Radio;
 

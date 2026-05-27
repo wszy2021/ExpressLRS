@@ -308,8 +308,19 @@ static bool interferenceLocatorBothAntennasWeak()
            dualRSSI.rssi2 <= INTERFERENCE_RSSI_WEAK_THRESHOLD_DBM;
 }
 
-static uint8_t getBest2G4LocatorRateIdx()
+static uint8_t getBestInterferenceLocatorRateIdx()
 {
+#if defined(Regulatory_Domain_1500)
+    static const expresslrs_RFrates_e preferredRates[] = {
+        RATE_LORA_1500_50HZ,
+        RATE_LORA_1500_100HZ,
+        RATE_LORA_1500_100HZ_8CH,
+        RATE_LORA_1500_200HZ,
+        RATE_LORA_1500_25HZ,
+    };
+    const uint8_t radioType = RADIO_TYPE_LR1121_LORA_1500;
+    const expresslrs_RFrates_e fallbackRate = RATE_LORA_1500_50HZ;
+#else
     static const expresslrs_RFrates_e preferredRates[] = {
         RATE_LORA_50HZ,
         RATE_LORA_100HZ_8CH,
@@ -317,6 +328,9 @@ static uint8_t getBest2G4LocatorRateIdx()
         RATE_LORA_250HZ,
         RATE_LORA_500HZ,
     };
+    const uint8_t radioType = RADIO_TYPE_LR1121_LORA_2G4;
+    const expresslrs_RFrates_e fallbackRate = RATE_LORA_500HZ;
+#endif
 
     for (expresslrs_RFrates_e rate : preferredRates)
     {
@@ -324,13 +338,13 @@ static uint8_t getBest2G4LocatorRateIdx()
         if (!isSupportedRFRate(idx))
             continue;
 #if defined(RADIO_LR1121)
-        if (get_elrs_airRateConfig(idx)->radio_type != RADIO_TYPE_LR1121_LORA_2G4)
+        if (get_elrs_airRateConfig(idx)->radio_type != radioType)
             continue;
 #endif
         return idx;
     }
 
-    return enumRatetoIndex(RATE_LORA_500HZ);
+    return enumRatetoIndex(fallbackRate);
 }
 
 static void updateInterferenceLocatorLinkStats()
@@ -382,7 +396,7 @@ static void setupInterferenceLocatorRadio()
 {
     LockRFmode = true;
 
-    uint8_t rateIdx = getBest2G4LocatorRateIdx();
+    uint8_t rateIdx = getBestInterferenceLocatorRateIdx();
     SetRFLinkRate(rateIdx, false);
     FHSSsetCurrIndex(0);
 
@@ -399,7 +413,8 @@ static void setupInterferenceLocatorRadio()
 
     SendLinkStatstoFCForcedSends = 5;
 
-    DBGLN("Interference locator: rate=%u freq=%u pwr=%u", rateIdx, freq, POWERMGNT::currPower());
+    DBGLN("Interference locator: band=%s rate=%u freq=%u pwr=%u",
+          FHSSconfig->domain, rateIdx, freq, POWERMGNT::currPower());
 }
 #endif
 
