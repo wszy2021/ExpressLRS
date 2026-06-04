@@ -368,7 +368,7 @@ void SetRFLinkRate(uint8_t index, bool bindMode) // Set speed of RF link
                  , uidMacSeedGet(), OtaCrcInitializer, (ModParams->radio_type == RADIO_TYPE_SX128x_FLRC)
 #endif
 #if defined(RADIO_LR1121)
-               , ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4, (uint8_t)UID[5], (uint8_t)UID[4]
+               , ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4, (uint8_t)UID[5], (uint8_t)UID[4]
 #endif
                  );
 
@@ -377,7 +377,7 @@ void SetRFLinkRate(uint8_t index, bool bindMode) // Set speed of RF link
     {
         Radio.Config(ModParams->bw2, ModParams->sf2, ModParams->cr2, FHSSgetInitialGeminiFreq(),
                     ModParams->PreambleLen2, invertIQ, ModParams->PayloadLength,
-                    ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4,
+                    ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4,
                     (uint8_t)UID[5], (uint8_t)UID[4], SX12XX_Radio_2);
     }
 #endif
@@ -2081,7 +2081,18 @@ void setup()
     #else
     hardwareConfigured = options_init();
     #endif
-
+    #ifdef GPIO10L_OUTPUT_HIGH
+        pinMode(10, OUTPUT);
+        digitalWrite(10, HIGH);
+        pinMode(18, OUTPUT);
+        digitalWrite(18, LOW);
+    #endif
+    #ifdef GPIO18H_OUTPUT_HIGH
+        pinMode(18, OUTPUT);
+        digitalWrite(18, HIGH);
+        pinMode(10, OUTPUT);
+        digitalWrite(10, LOW);
+    #endif
     if (hardwareConfigured)
     {
         // default to CRSF protocol and the compiled baud rate

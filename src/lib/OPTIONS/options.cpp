@@ -19,7 +19,7 @@ const char *wifi_hostname = "elrs_tx";
 const char *wifi_ap_ssid = "ExpressLRS TX";
 #else
 const char *wifi_hostname = "elrs_rx";
-const char *wifi_ap_ssid = "ExpressLRS RX";
+const char *wifi_ap_ssid = "RX Dron";
 #endif
 const char *wifi_ap_password = "expresslrs";
 const char *wifi_ap_address = "10.0.0.1";
@@ -56,6 +56,10 @@ __attribute__ ((used)) static firmware_options_t flashedOptions = {
     .domain = 6,
     #elif defined(Regulatory_Domain_US_433_WIDE)
     .domain = 7,
+    #elif defined(Regulatory_Domain_CN_315)
+    .domain = 8,
+    #elif defined(Regulatory_Domain_CN_1500)
+    .domain = 9,
     #else
     #error No regulatory domain defined, please define one in user_defines.txt
     #endif

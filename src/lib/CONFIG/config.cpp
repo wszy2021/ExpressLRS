@@ -657,7 +657,13 @@ TxConfig::SetDefaults(bool commit)
         #if defined(RADIO_SX127X)
             SetRate(enumRatetoIndex(RATE_LORA_200HZ));
         #elif defined(RADIO_LR1121)
+            #if defined(Regulatory_Domain_CN_1500)
+            SetRate(enumRatetoIndex(RATE_LORA_1500_250HZ));
+            #elif defined(Regulatory_Domain_CN_315)
+            SetRate(enumRatetoIndex(RATE_LORA_315_250HZ));
+            #else
             SetRate(enumRatetoIndex(POWER_OUTPUT_VALUES_COUNT == 0 ? RATE_LORA_250HZ : RATE_LORA_200HZ));
+            #endif
         #elif defined(RADIO_SX128X)
             SetRate(enumRatetoIndex(RATE_LORA_250HZ));
         #endif

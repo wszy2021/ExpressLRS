@@ -37,6 +37,8 @@ class RegulatoryDomain(Enum):
     eu_868 = 'eu_868'
     au_915 = 'au_915'
     fcc_915 = 'fcc_915'
+    cn_315 = 'cn_315'
+    cn_1500 = 'cn_1500'
 
     def __str__(self):
         return self.value
@@ -203,6 +205,11 @@ def domain_number(domain):
         return 6
     elif domain == RegulatoryDomain.us_433_wide:
         return 7
+    elif domain == RegulatoryDomain.cn_315:
+        return 8
+    elif domain == RegulatoryDomain.cn_1500:
+        return 9
+
 
 def patch_firmware(options, mm, pos, args):
     if options.mcuType is MCUType.STM32:
