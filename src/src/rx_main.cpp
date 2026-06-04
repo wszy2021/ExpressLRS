@@ -2085,7 +2085,7 @@ void setup()
         pinMode(10, OUTPUT);
         digitalWrite(10, HIGH);
         pinMode(18, OUTPUT);
-        digitalWrite(18, LOW);
+        digitalWrite(18, LOW); 
     #endif
     #ifdef GPIO18H_OUTPUT_HIGH
         pinMode(18, OUTPUT);
