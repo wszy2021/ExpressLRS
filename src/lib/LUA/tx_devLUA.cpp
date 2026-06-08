@@ -19,10 +19,21 @@
 #define STR_LUA_PACKETRATES \
     "D50Hz(-112dBm);25Hz(-123dBm);50Hz(-120dBm);100Hz(-117dBm);100Hz Full(-112dBm);200Hz(-112dBm)"
 #elif defined(RADIO_LR1121)
+#if defined(Regulatory_Domain_CN_1900)
+#define STR_LUA_PACKETRATES \
+    "50 1.9G;100 1.9G;100 Full 1.9G;200 1.9G;200 Full 1.9G;250 1.9G;K1000 Full 1.9G"
+#elif defined(Regulatory_Domain_CN_1500)
+#define STR_LUA_PACKETRATES \
+    "50 1.5G;100 1.5G;100 Full 1.5G;200 1.5G;200 Full 1.5G;250 1.5G;K1000 Full 1.5G"
+#elif defined(Regulatory_Domain_CN_315)
+#define STR_LUA_PACKETRATES \
+    "50 315M;100 315M;100 Full 315M;200 315M;200 Full 315M;250 315M;K1000 Full 315M"
+#else
 #define STR_LUA_PACKETRATES \
     "K1000 Full Low Band;DK500 2.4G;200 Full Low Band;250 Low Band;X100 Full;X150;" \
     "50 2.4G;100 Full 2.4G;150 2.4G;250 2.4G;333 Full 2.4G;500 2.4G;" \
     "50 Low Band;100 Low Band;100 Full Low Band;200 Low Band"
+#endif
 #elif defined(RADIO_SX128X)
 #define STR_LUA_PACKETRATES \
     "50Hz(-115dBm);100Hz Full(-112dBm);150Hz(-112dBm);250Hz(-108dBm);333Hz Full(-105dBm);500Hz(-105dBm);" \
@@ -54,6 +65,8 @@ static const char luastrHeadTrackingEnable[] = "Off;On;" STR_LUA_ALLAUX_UPDOWN;
 static const char luastrHeadTrackingStart[] = STR_LUA_ALLAUX;
 static const char luastrOffOn[] = "Off;On";
 static char luastrPacketRates[] = STR_LUA_PACKETRATES;
+static uint8_t luaPacketRateMap[RATE_MAX];
+static uint8_t luaPacketRateCount;
 
 #define HAS_RADIO (GPIO_PIN_SCK != UNDEF_PIN)
 
@@ -591,10 +604,10 @@ static void recalculatePacketRateOptions(int minInterval)
     const char *allRates = STR_LUA_PACKETRATES;
     const char *pos = allRates;
     luastrPacketRates[0] = 0;
+    luaPacketRateCount = 0;
     for (int i=0 ; i < RATE_MAX ; i++)
     {
-        uint8_t rate = i;
-        rate = RATE_MAX - 1 - rate;
+        uint8_t rate = RATE_MAX - 1 - i;
         bool rateAllowed = (get_elrs_airRateConfig(rate)->interval * get_elrs_airRateConfig(rate)->numOfSends) >= minInterval;
 
         // Skip unsupported modes for hardware with only a single LR1121 or with a single RF path
@@ -603,21 +616,31 @@ static void recalculatePacketRateOptions(int minInterval)
         const char *semi = strchrnul(pos, ';');
         if (rateAllowed)
         {
+            if (luaPacketRateCount > 0)
+            {
+                strcat(luastrPacketRates, ";");
+            }
             strncat(luastrPacketRates, pos, semi - pos);
+            luaPacketRateMap[luaPacketRateCount++] = rate;
         }
         pos = semi;
         if (*semi == ';')
         {
-            strcat(luastrPacketRates, ";");
-            pos = semi+1;
+            pos = semi + 1;
         }
     }
+}
 
-    // trim off trailing semicolons (assumes luastrPacketRates has at least 1 non-semicolon)
-    for (auto lastPos = strlen(luastrPacketRates)-1; luastrPacketRates[lastPos] == ';'; lastPos--)
+static uint8_t getLuaPacketRateSelection(uint8_t currentRate)
+{
+    for (uint8_t i = 0; i < luaPacketRateCount; i++)
     {
-        luastrPacketRates[lastPos] = '\0';
+        if (luaPacketRateMap[i] == currentRate)
+        {
+            return i;
+        }
     }
+    return 0;
 }
 
 uint8_t adjustSwitchModeForAirRate(OtaSwitchMode_e eSwitchMode, uint8_t packetSize)
@@ -637,9 +660,9 @@ static void registerLuaParameters()
 {
   if (HAS_RADIO) {
     registerLUAParameter(&luaAirRate, [](struct luaPropertiesCommon *item, uint8_t arg) {
-    if (arg < RATE_MAX)
+    if (arg < luaPacketRateCount)
     {
-      uint8_t selectedRate = RATE_MAX - 1 - arg;
+      uint8_t selectedRate = luaPacketRateMap[arg];
       uint8_t actualRate = adjustPacketRateForBaud(selectedRate);
       uint8_t newSwitchMode = adjustSwitchModeForAirRate(
         (OtaSwitchMode_e)config.GetSwitchMode(), get_elrs_airRateConfig(actualRate)->PayloadLength);
@@ -882,7 +905,7 @@ static int event()
   bool isMavlinkMode = config.GetLinkMode() == TX_MAVLINK_MODE;
   uint8_t currentRate = adjustPacketRateForBaud(config.GetRate());
   recalculatePacketRateOptions(handset->getMinPacketInterval());
-  setLuaTextSelectionValue(&luaAirRate, RATE_MAX - 1 - currentRate);
+  setLuaTextSelectionValue(&luaAirRate, getLuaPacketRateSelection(currentRate));
 
   setLuaTextSelectionValue(&luaTlmRate, config.GetTlm());
   luaTlmRate.options = isMavlinkMode ? tlmRatiosMav : tlmRatios;

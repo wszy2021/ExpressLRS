@@ -22,6 +22,7 @@ const fhss_config_t domains[] = {
     {"US433W",  FREQ_HZ_TO_REG_VAL(423500000), FREQ_HZ_TO_REG_VAL(438000000), 20, 434000000},
     {"CN315", FREQ_HZ_TO_REG_VAL(315000000), FREQ_HZ_TO_REG_VAL(315500000), 5, 315250000},
     {"CN1500", FREQ_HZ_TO_REG_VAL(1520000000), FREQ_HZ_TO_REG_VAL(1600000000), 80, 1560000000},
+    {"CN1900", FREQ_HZ_TO_REG_VAL(1900000000), FREQ_HZ_TO_REG_VAL(1980000000), 80, 1940000000},
 };
 
 #if defined(RADIO_LR1121)
@@ -82,7 +83,12 @@ uint16_t secondaryBandCount;
 
 void FHSSrandomiseFHSSsequence(const uint32_t seed)
 {
-    FHSSconfig = &domains[firmwareOptions.domain];
+#if defined(ELRS_COMPILED_DOMAIN)
+    const uint8_t domainIndex = ELRS_COMPILED_DOMAIN;
+#else
+    const uint8_t domainIndex = firmwareOptions.domain;
+#endif
+    FHSSconfig = &domains[domainIndex];
     sync_channel = (FHSSconfig->freq_count / 2) + 1;
     freq_spread = (FHSSconfig->freq_stop - FHSSconfig->freq_start) * FREQ_SPREAD_SCALE / (FHSSconfig->freq_count - 1);
     primaryBandCount = (FHSS_SEQUENCE_LEN / FHSSconfig->freq_count) * FHSSconfig->freq_count;
@@ -93,7 +99,7 @@ void FHSSrandomiseFHSSsequence(const uint32_t seed)
 
     FHSSrandomiseFHSSsequenceBuild(seed, FHSSconfig->freq_count, sync_channel, FHSSsequence);
 
-#if defined(RADIO_LR1121)
+#if defined(RADIO_LR1121) && !defined(ELRS_CN_SINGLE_BAND)
     FHSSconfigDualBand = &domainsDualBand[0];
     sync_channel_DualBand = (FHSSconfigDualBand->freq_count / 2) + 1;
     freq_spread_DualBand = (FHSSconfigDualBand->freq_stop - FHSSconfigDualBand->freq_start) * FREQ_SPREAD_SCALE / (FHSSconfigDualBand->freq_count - 1);

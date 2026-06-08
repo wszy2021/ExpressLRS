@@ -501,6 +501,23 @@ bool ICACHE_RAM_ATTR ValidatePacketCrcStd(OTA_Packet_s * const otaPktPtr)
     return inCRC == calculatedCRC;
 }
 
+bool ICACHE_RAM_ATTR OtaTryValidatePacketCrc(OTA_Packet_s * const otaPktPtr, bool acceptUidCrc)
+{
+    if (OtaValidatePacketCrc(otaPktPtr))
+    {
+        return true;
+    }
+    if (!acceptUidCrc)
+    {
+        return false;
+    }
+    const uint16_t savedCrcInit = OtaCrcInitializer;
+    OtaUpdateCrcInitFromUid();
+    const bool uidCrcValid = OtaValidatePacketCrc(otaPktPtr);
+    OtaCrcInitializer = savedCrcInit;
+    return uidCrcValid;
+}
+
 void ICACHE_RAM_ATTR GeneratePacketCrcFull(OTA_Packet_s * const otaPktPtr)
 {
     otaPktPtr->full.crc = ota_crc.calc((uint8_t*)otaPktPtr, OTA8_CRC_CALC_LEN, OtaCrcInitializer);

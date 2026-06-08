@@ -81,7 +81,11 @@ volatile bool busyTransmitting;
 static volatile bool ModelUpdatePending;
 
 uint8_t MSPDataPackage[5];
+#if defined(ELRS_CN_SINGLE_BAND)
+#define BindingSpamAmount 300
+#else
 #define BindingSpamAmount 25
+#endif
 static uint8_t BindingSendCount;
 bool RxWiFiReadyToSend = false;
 
@@ -374,7 +378,8 @@ void SetRFLinkRate(uint8_t index) // Set speed of RF link
   expresslrs_rf_pref_params_s *const RFperf = get_elrs_RFperfParams(index);
   // Binding always uses invertIQ
   bool invertIQ = InBindingMode || (UID[5] & 0x01);
-  OtaSwitchMode_e newSwitchMode = (OtaSwitchMode_e)config.GetSwitchMode();
+  // RX always validates bind packets in smWideOr8ch; match that during binding
+  OtaSwitchMode_e newSwitchMode = InBindingMode ? smWideOr8ch : (OtaSwitchMode_e)config.GetSwitchMode();
 
   bool subGHz = FHSSconfig->freq_center < 1000000000;
 #if defined(RADIO_LR1121)
@@ -407,7 +412,7 @@ void SetRFLinkRate(uint8_t index) // Set speed of RF link
                , uidMacSeedGet(), OtaCrcInitializer, (ModParams->radio_type == RADIO_TYPE_SX128x_FLRC)
 #endif
 #if defined(RADIO_LR1121)
-               , (ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4), (uint8_t)UID[5], (uint8_t)UID[4]
+               , (ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4), (uint8_t)UID[5], (uint8_t)UID[4]
 #endif
                );
 
@@ -416,7 +421,7 @@ void SetRFLinkRate(uint8_t index) // Set speed of RF link
   {
     Radio.Config(ModParams->bw2, ModParams->sf2, ModParams->cr2, FHSSgetInitialGeminiFreq(),
                 ModParams->PreambleLen2, invertIQ, ModParams->PayloadLength,
-                (ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4),
+                (ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4),
                 (uint8_t)UID[5], (uint8_t)UID[4], SX12XX_Radio_2);
   }
 #endif
@@ -491,9 +496,9 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
   // Do not send a stale channels packet to the RX if one has not been received from the handset
   // *Do* send data if a packet has never been received from handset and the timer is running
   // this is the case when bench testing and TXing without a handset
-  bool dontSendChannelData = false;
+  bool dontSendChannelData = InBindingMode;
   uint32_t lastRcData = handset->GetRCdataLastRecv();
-  if (lastRcData && (micros() - lastRcData > 1000000))
+  if (!InBindingMode && lastRcData && (micros() - lastRcData > 1000000))
   {
     // The tx is in Mavlink mode and without a valid crsf or RC input.  Do not send stale or fake zero packet RC!
     // Only send sync and MSP packets.
@@ -505,6 +510,34 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
     {
       return;
     }
+  }
+
+  if (InBindingMode)
+  {
+    if (!MspSender.IsActive())
+    {
+      return;
+    }
+    busyTransmitting = true;
+    WORD_ALIGNED_ATTR OTA_Packet_s otaPkt = {0};
+    otaPkt.std.type = PACKET_TYPE_MSPDATA;
+    otaPkt.std.msp_ul.packageIndex = MspSender.GetCurrentPayload(
+      otaPkt.std.msp_ul.payload,
+      sizeof(otaPkt.std.msp_ul.payload));
+    BindingSendCount++;
+    OtaGeneratePacketCrc(&otaPkt);
+#if defined(Regulatory_Domain_EU_CE_2400)
+    SX12XX_Radio_Number_t transmittingRadio = LbtChannelIsClear(SX12XX_Radio_All);
+    if (transmittingRadio == SX12XX_Radio_NONE)
+    {
+      deferExecutionMicros(ExpressLRS_currAirRate_RFperfParams->TOA, Radio.TXdoneCallback);
+    }
+    else
+#endif
+    {
+      Radio.TXnb((uint8_t *)&otaPkt, SX12XX_Radio_All);
+    }
+    return;
   }
 
   busyTransmitting = true;
@@ -543,7 +576,7 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
     {
       OtaPackAirportData(&otaPkt, &apInputBuffer);
     }
-    else if ((NextPacketIsMspData && MspSender.IsActive()) || dontSendChannelData)
+    else if ((NextPacketIsMspData && MspSender.IsActive()) || dontSendChannelData || (InBindingMode && MspSender.IsActive()))
     {
       otaPkt.std.type = PACKET_TYPE_MSPDATA;
       if (OtaIsFullRes)
@@ -670,9 +703,13 @@ void ICACHE_RAM_ATTR timerCallback()
   if (!InBindingMode)
     OtaNonce++;
 
+  if (InBindingMode)
+  {
+    TelemetryRcvPhase = ttrpTransmitting;
+  }
   // If HandleTLM has started Receive mode, TLM packet reception should begin shortly
   // Skip transmitting on this slot
-  if (TelemetryRcvPhase == ttrpPreReceiveGap)
+  else if (TelemetryRcvPhase == ttrpPreReceiveGap)
   {
     TelemetryRcvPhase = ttrpExpectingTelem;
 #if defined(Regulatory_Domain_EU_CE_2400)
@@ -749,7 +786,13 @@ static void ChangeRadioParams()
 {
   ModelUpdatePending = false;
   ResetPower(); // Call before SetRFLinkRate(). The LR1121 Radio lib can now set the correct output power in Config().
-  SetRFLinkRate(config.GetRate());
+  uint8_t rate = config.GetRate();
+  if (rate >= RATE_MAX || !isSupportedRFRate(rate))
+  {
+    rate = enumRatetoIndex(RATE_BINDING);
+    config.SetRate(rate);
+  }
+  SetRFLinkRate(rate);
   LbtEnableIfRequired();
 }
 
@@ -858,8 +901,8 @@ void ICACHE_RAM_ATTR TXdoneISR()
     const uint8_t modResult = (OtaNonce + 1) % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
 
     // If TLM enabled and next packet is going to be telemetry, or in LBT mode, start listening to have a large receive window (time-wise)
-    const bool nextIsTLM = ExpressLRS_currTlmDenom != 1 && ((OtaNonce + 1) % ExpressLRS_currTlmDenom) == 0;
-    const bool doRx = nextIsTLM || LbtIsEnabled;
+    const bool nextIsTLM = !InBindingMode && ExpressLRS_currTlmDenom != 1 && ((OtaNonce + 1) % ExpressLRS_currTlmDenom) == 0;
+    const bool doRx = !InBindingMode && (nextIsTLM || LbtIsEnabled);
 
     // If the next packet should be on the next FHSS frequency, do the hop
     if (!InBindingMode && modResult == 0)
@@ -1016,21 +1059,27 @@ static void EnterBindingMode()
   while (busyTransmitting);
 
   // Queue up sending the Master UID as MSP packets
-  SendUIDOverMSP();
-
   // Binding uses a CRCInit=0, 50Hz, and InvertIQ
   OtaCrcInitializer = 0;
   OtaNonce = 0; // Lock the OtaNonce to prevent syncspam packets
   InBindingMode = true; // Set binding mode before SetRFLinkRate() for correct IQ
+  TelemetryRcvPhase = ttrpTransmitting;
+  syncSpamCounter = 0;
+  syncSpamCounterAfterRateChange = 0;
+  ExpressLRS_currTlmDenom = 1; // No telemetry windows while binding
+
+  SendUIDOverMSP();
 
   // Start attempting to bind
   // Lock the RF rate and freq while binding
-  SetRFLinkRate(enumRatetoIndex(RATE_BINDING));
+  uint8_t bindRate = enumRatetoIndex(RATE_BINDING);
+  SetRFLinkRate(bindRate);
 
   // Start transmitting again
   hwTimer::resume();
 
-  DBGLN("Entered binding mode at freq = %d", Radio.currFreq);
+  DBGLN("Entered binding mode: rate=%u domain=%s freq=%u crcInit=0 interval=%uus",
+        bindRate, FHSSconfig->domain, Radio.currFreq, ExpressLRS_currAirRate_Modparams->interval);
 }
 
 static void ExitBindingMode()
@@ -1582,7 +1631,7 @@ void loop()
   static bool mspTransferActive = false;
   if (InBindingMode)
   {
-#if defined(RADIO_LR1121)
+#if defined(RADIO_LR1121) && !defined(ELRS_CN_SINGLE_BAND)
     // Send half of the bind packets on the 2.4GHz domain
     if (BindingSendCount == BindingSpamAmount / 2) {
       SetRFLinkRate(RATE_DUALBAND_BINDING);

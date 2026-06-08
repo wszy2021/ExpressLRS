@@ -60,6 +60,8 @@ __attribute__ ((used)) static firmware_options_t flashedOptions = {
     .domain = 8,
     #elif defined(Regulatory_Domain_CN_1500)
     .domain = 9,
+    #elif defined(Regulatory_Domain_CN_1900)
+    .domain = 10,
     #else
     #error No regulatory domain defined, please define one in user_defines.txt
     #endif
@@ -351,7 +353,15 @@ static void options_LoadFromFlashOrFile(EspFlashStream &strmFlash)
     #endif
     firmwareOptions.lock_on_first_connection = doc["lock-on-first-connection"] | true;
     #endif
-    firmwareOptions.domain = doc["domain"] | 0;
+#if defined(ELRS_COMPILED_DOMAIN)
+    // CN single-band unified builds: domain is fixed at compile time (not from SPIFFS/flash JSON)
+    firmwareOptions.domain = ELRS_COMPILED_DOMAIN;
+#else
+    if (doc["domain"].is<uint8_t>())
+    {
+        firmwareOptions.domain = doc["domain"].as<uint8_t>();
+    }
+#endif
     firmwareOptions.flash_discriminator = doc["flash-discriminator"] | 0U;
 
     builtinOptions.clear();

@@ -39,6 +39,7 @@ class RegulatoryDomain(Enum):
     fcc_915 = 'fcc_915'
     cn_315 = 'cn_315'
     cn_1500 = 'cn_1500'
+    cn_1900 = 'cn_1900'
 
     def __str__(self):
         return self.value
@@ -209,6 +210,8 @@ def domain_number(domain):
         return 8
     elif domain == RegulatoryDomain.cn_1500:
         return 9
+    elif domain == RegulatoryDomain.cn_1900:
+        return 10
 
 
 def patch_firmware(options, mm, pos, args):

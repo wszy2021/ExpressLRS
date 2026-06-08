@@ -24,14 +24,15 @@
 #-DRegulatory_Domain_EU_433
 #-DRegulatory_Domain_US_433
 #-DRegulatory_Domain_US_433_WIDE
--DRegulatory_Domain_FCC_915
--DRegulatory_Domain_ISM_2400
+#-DRegulatory_Domain_FCC_915
+#-DRegulatory_Domain_ISM_2400
 #-DRegulatory_Domain_EU_CE_2400
 #-DRegulatory_Domain_CN_315
 #-DRegulatory_Domain_CN_1500
+-DRegulatory_Domain_CN_1900
 
-#-DGPIO10_OUTPUT_HIGH=1
--DGPIO18_OUTPUT_HIGH=1
+#-DGPIO10L_OUTPUT_HIGH=1
+-DGPIO18H_OUTPUT_HIGH=1
 
 ### PERFORMANCE OPTIONS: ###
 
@@ -88,6 +89,7 @@
 
 # Turn on debug messages, if disabled then all debugging options (starting with DEBUG_) are disabled
 -DDEBUG_LOG
+-DRCVR_UART_BAUD=115200
 
 # For an ESP32S3 MCU, there are two options:
 # 1 - Pull-up on GPIO3, USB for JTAG (on MI_02), debug logging uses main UART.
@@ -101,7 +103,7 @@
 #-DDEBUG_RX_SCOREBOARD
 
 # Don't send RC msgs over UART
-#-DDEBUG_CRSF_NO_OUTPUT
+-DDEBUG_CRSF_NO_OUTPUT
 
 # These debugging options send extra information to BetaFlight in the LinkStatistics packet
 #-DDEBUG_BF_LINK_STATS

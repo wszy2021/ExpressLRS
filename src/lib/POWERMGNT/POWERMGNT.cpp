@@ -329,6 +329,12 @@ void POWERMGNT::setPower(PowerLevels_e Power)
     {
         Radio.SetOutputPower(powerValuesDual[PowerDual - MinPower], false); // Set the high frequency power setting.
     }
+    #if defined(ELRS_CN_SINGLE_BAND)
+    else if (powerValues != nullptr)
+    {
+        Radio.SetOutputPower(powerValues[Power - MinPower], false);
+    }
+    #endif
 #endif
 
     devicesTriggerEvent();

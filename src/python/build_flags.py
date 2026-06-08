@@ -157,6 +157,15 @@ if '-DRADIO_SX127X=1' in build_flags or '-DRADIO_LR1121=1' in build_flags:
     if not fnmatch.filter(build_flags, '*-DRegulatory_Domain*'):
         print_error('Please define a Regulatory_Domain in user_defines.txt')
 
+    cn_domains = fnmatch.filter(build_flags, '*-DRegulatory_Domain_CN_*')
+    other_domains = [f for f in fnmatch.filter(build_flags, '*-DRegulatory_Domain*')
+                     if 'CN_315' not in f and 'CN_1500' not in f and 'CN_1900' not in f
+                     and 'ISM_2400' not in f and 'EU_CE_2400' not in f]
+    if len(cn_domains) > 1:
+        print_error('Only one CN regulatory domain (CN_315/CN_1500/CN_1900) may be defined')
+    if len(cn_domains) == 1 and len(other_domains) > 0:
+        print_error('CN regulatory domain cannot be combined with AU/FCC/EU/US domains')
+
     if fnmatch.filter(build_flags, '*-DRegulatory_Domain_AU_915'):
         json_flags['domain'] = 0
     if fnmatch.filter(build_flags, '*-DRegulatory_Domain_FCC_915'):
@@ -177,6 +186,8 @@ if '-DRADIO_SX127X=1' in build_flags or '-DRADIO_LR1121=1' in build_flags:
         json_flags['domain'] = 8
     if fnmatch.filter(build_flags, '*-DRegulatory_Domain_CN_1500'):
         json_flags['domain'] = 9
+    if fnmatch.filter(build_flags, '*-DRegulatory_Domain_CN_1900'):
+        json_flags['domain'] = 10
 else:
     json_flags['domain'] = 0
 

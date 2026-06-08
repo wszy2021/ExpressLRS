@@ -368,7 +368,7 @@ void SetRFLinkRate(uint8_t index, bool bindMode) // Set speed of RF link
                  , uidMacSeedGet(), OtaCrcInitializer, (ModParams->radio_type == RADIO_TYPE_SX128x_FLRC)
 #endif
 #if defined(RADIO_LR1121)
-               , ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4, (uint8_t)UID[5], (uint8_t)UID[4]
+               , ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4, (uint8_t)UID[5], (uint8_t)UID[4]
 #endif
                  );
 
@@ -377,7 +377,7 @@ void SetRFLinkRate(uint8_t index, bool bindMode) // Set speed of RF link
     {
         Radio.Config(ModParams->bw2, ModParams->sf2, ModParams->cr2, FHSSgetInitialGeminiFreq(),
                     ModParams->PreambleLen2, invertIQ, ModParams->PayloadLength,
-                    ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4,
+                    ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4,
                     (uint8_t)UID[5], (uint8_t)UID[4], SX12XX_Radio_2);
     }
 #endif
@@ -1000,6 +1000,7 @@ static void ICACHE_RAM_ATTR ProcessRfPacket_MSP(OTA_Packet_s const * const otaPk
     // [1] is the package index, first packet of the MSP
     if (InBindingMode && packageIndex == 1 && payload[0] == MSP_ELRS_BIND)
     {
+        DBGLN("Bind MSP received");
         OnELRSBindMSP((uint8_t *)&payload[1]);
         return;
     }
@@ -1106,7 +1107,10 @@ bool ICACHE_RAM_ATTR ProcessRFPacket(SX12xxDriverCommon::rx_status const status)
 {
     if (status != SX12xxDriverCommon::SX12XX_RX_OK)
     {
-        DBGVLN("HW CRC error");
+        if (!InBindingMode)
+        {
+            DBGVLN("HW CRC error");
+        }
         #if defined(DEBUG_RX_SCOREBOARD)
             lastPacketCrcError = true;
         #endif
@@ -1115,9 +1119,13 @@ bool ICACHE_RAM_ATTR ProcessRFPacket(SX12xxDriverCommon::rx_status const status)
     uint32_t const beginProcessing = micros();
 
     OTA_Packet_s * const otaPktPtr = (OTA_Packet_s * const)Radio.RXdataBuffer;
-    if (!OtaValidatePacketCrc(otaPktPtr))
+    if (!OtaTryValidatePacketCrc(otaPktPtr, InBindingMode))
     {
-        DBGVLN("CRC error");
+        // Wrong air rate/CRC init from a non-binding TX shows up as CRC errors here
+        if (!InBindingMode)
+        {
+            DBGVLN("CRC error");
+        }
         #if defined(DEBUG_RX_SCOREBOARD)
             lastPacketCrcError = true;
         #endif
@@ -1651,6 +1659,11 @@ static void setupBindingFromConfig()
     {
         memcpy(UID, config.GetUID(), UID_LEN);
     }
+    else if (firmwareOptions.hasUID)
+    {
+        // Use the compiled binding phrase until MSP bind writes EEPROM
+        memcpy(UID, firmwareOptions.uid, UID_LEN);
+    }
 
     DBGLN("UID=(%d, %d, %d, %d, %d, %d) ModelId=%u",
         UID[0], UID[1], UID[2], UID[3], UID[4], UID[5], config.GetModelId());
@@ -1729,10 +1742,12 @@ static void cycleRfMode(unsigned long now)
         DBGLN("%u", ExpressLRS_currAirRate_Modparams->interval);
 
         // Skip unsupported modes for hardware with only a single LR1121 or with a single RF path
-        while (!isSupportedRFRate(scanIndex % RATE_MAX))
+        uint8_t skipCount = 0;
+        while (!isSupportedRFRate(scanIndex % RATE_MAX) && skipCount < RATE_MAX)
         {
             DBGLN("Skip %u", get_elrs_airRateConfig(scanIndex % RATE_MAX)->interval);
             scanIndex++;
+            skipCount++;
         }
 
         // Switch to FAST_SYNC if not already in it (won't be if was just connected)
@@ -1756,6 +1771,9 @@ static void EnterBindingMode()
     // Binding uses a CRCInit=0, 50Hz, and InvertIQ
     OtaCrcInitializer = 0;
     InBindingMode = true;
+    FHSSsetCurrIndex(0);
+    OtaNonce = 0;
+    alreadyFHSS = false;
     // Any method of entering bind resets a loan
     // Model can be reloaned immediately by binding now
     config.ReturnLoan();
@@ -1763,12 +1781,15 @@ static void EnterBindingMode()
 
     // Start attempting to bind
     // Lock the RF rate and freq while binding
-    SetRFLinkRate(enumRatetoIndex(RATE_BINDING), true);
+    uint8_t bindRate = enumRatetoIndex(RATE_BINDING);
+    SetRFLinkRate(bindRate, true);
 
     // If the Radio Params (including InvertIQ) parameter changed, need to restart RX to take effect
     Radio.RXnb();
 
-    DBGLN("Entered binding mode at freq = %d", Radio.currFreq);
+    DBGLN("Entered binding mode: rate=%u domain=%s freq=%u crcInit=0 interval=%uus",
+          bindRate, FHSSconfig->domain, Radio.currFreq, ExpressLRS_currAirRate_Modparams->interval);
+    DBGLN("TX must enter bind within 6s at same domain/rate");
     devicesTriggerEvent();
 }
 
@@ -1815,7 +1836,7 @@ static void updateBindingMode(unsigned long now)
         ExitBindingMode();
     }
 
-#if defined(RADIO_LR1121)
+#if defined(RADIO_LR1121) && !defined(ELRS_CN_SINGLE_BAND)
     // Change frequency domains every 500ms.  This will allow single LR1121 receivers to receive bind packets from SX12XX Tx modules.
     else if (InBindingMode && (now - BindingRateChangeTime) > BindingRateChangeCyclePeriod)
     {

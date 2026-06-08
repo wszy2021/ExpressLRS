@@ -171,6 +171,7 @@ extern OtaSwitchMode_e OtaSwitchModeCurrent;
 typedef bool (*ValidatePacketCrc_t)(OTA_Packet_s * const otaPktPtr);
 typedef void (*GeneratePacketCrc_t)(OTA_Packet_s * const otaPktPtr);
 extern ValidatePacketCrc_t OtaValidatePacketCrc;
+bool ICACHE_RAM_ATTR OtaTryValidatePacketCrc(OTA_Packet_s * const otaPktPtr, bool acceptUidCrc);
 extern GeneratePacketCrc_t OtaGeneratePacketCrc;
 // Value is implicit leading 1, comment is Koopman formatting (implicit trailing 1) https://users.ece.cmu.edu/~koopman/crc/
 #define ELRS_CRC_POLY 0x07 // 0x83
