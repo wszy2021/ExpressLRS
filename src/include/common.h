@@ -308,6 +308,7 @@ extern SX127xDriver Radio;
 #define RATE_MAX 22
 #if defined(Regulatory_Domain_1500)
 #define RATE_BINDING RATE_LORA_1500_50HZ
+#define RATE_DUALBAND_BINDING 20  // 1.5G 50Hz air rate index (no dual-band flip on 1500-only)
 #else
 #define RATE_BINDING RATE_LORA_50HZ
 #define RATE_DUALBAND_BINDING 9 // 2.4GHz 50Hz

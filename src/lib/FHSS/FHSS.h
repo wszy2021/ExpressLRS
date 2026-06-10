@@ -22,6 +22,11 @@
 
 #define FHSS_SEQUENCE_LEN 256
 
+#if defined(RADIO_LR1121) && defined(Regulatory_Domain_1500)
+// L1575 (1560-1587 MHz, center 1575 MHz) is index 8 in domains[] (must match build_flags.py domain=8)
+#define FHSS_DOMAIN_1500_INDEX 8
+#endif
+
 typedef struct {
     const char  *domain;
     uint32_t    freq_start;

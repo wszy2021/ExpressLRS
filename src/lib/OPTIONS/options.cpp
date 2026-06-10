@@ -56,6 +56,8 @@ __attribute__ ((used)) static firmware_options_t flashedOptions = {
     .domain = 6,
     #elif defined(Regulatory_Domain_US_433_WIDE)
     .domain = 7,
+    #elif defined(Regulatory_Domain_1500)
+    .domain = 8,
     #else
     #error No regulatory domain defined, please define one in user_defines.txt
     #endif
@@ -342,12 +344,12 @@ static void options_LoadFromFlashOrFile(EspFlashStream &strmFlash)
     firmwareOptions.uart_baud = doc["rcvr-uart-baud"] | USE_AIRPORT_AT_BAUD;
     firmwareOptions.is_airport = doc["is-airport"] | true;
     #else
-    firmwareOptions.uart_baud = doc["rcvr-uart-baud"] | 420000;
+    firmwareOptions.uart_baud = doc["rcvr-uart-baud"] | firmwareOptions.uart_baud;
     firmwareOptions.is_airport = doc["is-airport"] | false;
     #endif
     firmwareOptions.lock_on_first_connection = doc["lock-on-first-connection"] | true;
     #endif
-    firmwareOptions.domain = doc["domain"] | 0;
+    firmwareOptions.domain = doc["domain"] | firmwareOptions.domain;
     firmwareOptions.flash_discriminator = doc["flash-discriminator"] | 0U;
 
     builtinOptions.clear();

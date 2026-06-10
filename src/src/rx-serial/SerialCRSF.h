@@ -8,6 +8,7 @@ public:
     uint32_t sendRCFrame(bool frameAvailable, bool frameMissed, uint32_t *channelData) override;
     void queueMSPFrameTransmission(uint8_t* data) override;
     void queueLinkStatisticsPacket() override;
+    void sendLinkStatisticsNow();
     void sendQueuedData(uint32_t maxBytesToSend) override;
 
 private:

@@ -57,6 +57,24 @@ void SerialCRSF::queueLinkStatisticsPacket()
     _fifo.unlock();
 }
 
+void SerialCRSF::sendLinkStatisticsNow()
+{
+    constexpr uint8_t payloadLen = sizeof(crsfLinkStatistics_t);
+    const uint8_t header[] = {
+        CRSF_ADDRESS_FLIGHT_CONTROLLER,
+        CRSF_FRAME_SIZE(payloadLen),
+        CRSF_FRAMETYPE_LINK_STATISTICS
+    };
+
+    uint8_t crc = crsf_crc.calc(header[2]);
+    crc = crsf_crc.calc((byte *)&CRSF::LinkStatistics, payloadLen, crc);
+
+    _outputPort->write(header, sizeof(header));
+    _outputPort->write((byte *)&CRSF::LinkStatistics, payloadLen);
+    _outputPort->write(crc);
+    _outputPort->flush();
+}
+
 uint32_t SerialCRSF::sendRCFrame(bool frameAvailable, bool frameMissed, uint32_t *channelData)
 {
 #if defined(INTERFERENCE_LOCATOR_RX)

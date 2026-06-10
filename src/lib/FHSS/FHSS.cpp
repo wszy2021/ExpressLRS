@@ -20,7 +20,7 @@ const fhss_config_t domains[] = {
     {"EU433",  FREQ_HZ_TO_REG_VAL(433100000), FREQ_HZ_TO_REG_VAL(434450000), 3, 434000000},
     {"US433",  FREQ_HZ_TO_REG_VAL(433250000), FREQ_HZ_TO_REG_VAL(438000000), 8, 434000000},
     {"US433W",  FREQ_HZ_TO_REG_VAL(423500000), FREQ_HZ_TO_REG_VAL(438000000), 20, 434000000},
-    {"CN1520", FREQ_HZ_TO_REG_VAL(1520000000), FREQ_HZ_TO_REG_VAL(1620000000), 40, 1570000000},
+    {"L1575",  FREQ_HZ_TO_REG_VAL(1560000000), FREQ_HZ_TO_REG_VAL(1587000000), 28, 1575000000},
 };
 
 #if defined(RADIO_LR1121)
@@ -73,8 +73,33 @@ bool FHSSuseDualBand = false;
 uint16_t primaryBandCount;
 uint16_t secondaryBandCount;
 
+#if defined(RADIO_LR1121) && defined(Regulatory_Domain_1500)
+static void FHSSconfigure1500Band()
+{
+    FHSSconfig = &domains[FHSS_DOMAIN_1500_INDEX];
+    sync_channel = (FHSSconfig->freq_count / 2) + 1;
+    freq_spread = (FHSSconfig->freq_stop - FHSSconfig->freq_start) * FREQ_SPREAD_SCALE / (FHSSconfig->freq_count - 1);
+    primaryBandCount = (FHSS_SEQUENCE_LEN / FHSSconfig->freq_count) * FHSSconfig->freq_count;
+    FHSSusePrimaryFreqBand = true;
+    FHSSuseDualBand = false;
+    DBGLN("FHSS 1.5G: %s %u-%u MHz center %u MHz (%u ch)",
+          FHSSconfig->domain,
+          (unsigned)(FHSSconfig->freq_start / 1000000),
+          (unsigned)(FHSSconfig->freq_stop / 1000000),
+          (unsigned)(FHSSconfig->freq_center / 1000000),
+          (unsigned)FHSSconfig->freq_count);
+}
+#endif
+
 void FHSSrandomiseFHSSsequence(const uint32_t seed)
 {
+#if defined(RADIO_LR1121) && defined(Regulatory_Domain_1500)
+    if (firmwareOptions.domain == FHSS_DOMAIN_1500_INDEX)
+    {
+        FHSSconfigure1500Band();
+    }
+    else
+#endif
     FHSSconfig = &domains[firmwareOptions.domain];
     sync_channel = (FHSSconfig->freq_count / 2) + 1;
     freq_spread = (FHSSconfig->freq_stop - FHSSconfig->freq_start) * FREQ_SPREAD_SCALE / (FHSSconfig->freq_count - 1);
@@ -87,18 +112,28 @@ void FHSSrandomiseFHSSsequence(const uint32_t seed)
     FHSSrandomiseFHSSsequenceBuild(seed, FHSSconfig->freq_count, sync_channel, FHSSsequence);
 
 #if defined(RADIO_LR1121)
-    FHSSconfigDualBand = &domainsDualBand[0];
-    sync_channel_DualBand = (FHSSconfigDualBand->freq_count / 2) + 1;
-    freq_spread_DualBand = (FHSSconfigDualBand->freq_stop - FHSSconfigDualBand->freq_start) * FREQ_SPREAD_SCALE / (FHSSconfigDualBand->freq_count - 1);
-    secondaryBandCount = (FHSS_SEQUENCE_LEN / FHSSconfigDualBand->freq_count) * FHSSconfigDualBand->freq_count;
+#if defined(Regulatory_Domain_1500)
+    if (firmwareOptions.domain == FHSS_DOMAIN_1500_INDEX)
+    {
+        // Dual-Band = 900MHz + 2.4GHz FHSS table; NOT the same as dual-antenna (2x LR1121)
+        DBGLN("L1575: Dual-Band FHSS skipped (1.5G-only build)");
+    }
+    else
+#endif
+    {
+        FHSSconfigDualBand = &domainsDualBand[0];
+        sync_channel_DualBand = (FHSSconfigDualBand->freq_count / 2) + 1;
+        freq_spread_DualBand = (FHSSconfigDualBand->freq_stop - FHSSconfigDualBand->freq_start) * FREQ_SPREAD_SCALE / (FHSSconfigDualBand->freq_count - 1);
+        secondaryBandCount = (FHSS_SEQUENCE_LEN / FHSSconfigDualBand->freq_count) * FHSSconfigDualBand->freq_count;
 
-    DBGLN("Setting Dual Band %s Mode", FHSSconfigDualBand->domain);
-    DBGLN("Number of FHSS frequencies = %u", FHSSconfigDualBand->freq_count);
-    DBGLN("Sync channel Dual Band = %u", sync_channel_DualBand);
+        DBGLN("Setting Dual Band %s Mode", FHSSconfigDualBand->domain);
+        DBGLN("Number of FHSS frequencies = %u", FHSSconfigDualBand->freq_count);
+        DBGLN("Sync channel Dual Band = %u", sync_channel_DualBand);
 
-    FHSSusePrimaryFreqBand = false;
-    FHSSrandomiseFHSSsequenceBuild(seed, FHSSconfigDualBand->freq_count, sync_channel_DualBand, FHSSsequence_DualBand);
-    FHSSusePrimaryFreqBand = true;
+        FHSSusePrimaryFreqBand = false;
+        FHSSrandomiseFHSSsequenceBuild(seed, FHSSconfigDualBand->freq_count, sync_channel_DualBand, FHSSsequence_DualBand);
+        FHSSusePrimaryFreqBand = true;
+    }
 #endif
 }
 
@@ -148,7 +183,8 @@ void FHSSrandomiseFHSSsequenceBuild(const uint32_t seed, uint32_t freqCount, uin
         }
     }
 
-    // output FHSS sequence
+    // output FHSS sequence (skipped in locator mode — verbose dump blocks the UART)
+#if !defined(INTERFERENCE_LOCATOR_RX)
     for (uint16_t i=0; i < FHSSgetSequenceCount(); i++)
     {
         DBG("%u ",inSequence[i]);
@@ -156,6 +192,7 @@ void FHSSrandomiseFHSSsequenceBuild(const uint32_t seed, uint32_t freqCount, uin
             DBGCR;
     }
     DBGCR;
+#endif
 }
 
 bool isDomain868()

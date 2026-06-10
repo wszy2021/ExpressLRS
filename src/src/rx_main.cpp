@@ -148,7 +148,12 @@ uint32_t serialBaud;
 #elif defined(TARGET_DIY_900_RX_STM32)
     HardwareSerial SERIAL_PROTOCOL_TX(USART1);
 #else
+    #if defined(PLATFORM_ESP32_C3) && defined(INTERFERENCE_LOCATOR_RX)
+    static HardwareSerial CrsfUart(0);
+    #define SERIAL_PROTOCOL_TX CrsfUart
+    #else
     #define SERIAL_PROTOCOL_TX Serial
+    #endif
 
     #if defined(PLATFORM_ESP32)
         #define SERIAL1_PROTOCOL_TX Serial1
@@ -173,7 +178,11 @@ SerialIO *serialIO = nullptr;
 #elif defined(TARGET_RX_FM30_MINI)
     #define SERIAL_PROTOCOL_RX SERIAL_PROTOCOL_TX
 #else
+    #if defined(PLATFORM_ESP32_C3) && defined(INTERFERENCE_LOCATOR_RX)
+    #define SERIAL_PROTOCOL_RX CrsfUart
+    #else
     #define SERIAL_PROTOCOL_RX Serial
+    #endif
     #define SERIAL1_PROTOCOL_RX Serial1
 #endif
 
@@ -295,6 +304,11 @@ uint8_t getLq()
 
 static inline void checkGeminiMode()
 {
+#if defined(INTERFERENCE_LOCATOR_RX)
+    // True dual-diversity: both LR1121 chips listen on the same frequency
+    geminiMode = 0;
+    return;
+#endif
     if (isDualRadio())
     {
         geminiMode = config.GetAntennaMode() || FHSSuseDualBand; // Force Gemini when in DualBand mode.  Whats the point of using a single frequency!
@@ -302,11 +316,58 @@ static inline void checkGeminiMode()
 }
 
 #if defined(INTERFERENCE_LOCATOR_RX)
-static bool interferenceLocatorBothAntennasWeak()
+static bool interferenceLocatorRssiValid(int16_t rssiDbm)
 {
-    return dualRSSI.rssi1 <= INTERFERENCE_RSSI_WEAK_THRESHOLD_DBM &&
-           dualRSSI.rssi2 <= INTERFERENCE_RSSI_WEAK_THRESHOLD_DBM;
+    // LR1121 GetRssiInst returns negative dBm; 0 means no valid RX reading
+    return rssiDbm < 0 && rssiDbm > -127;
 }
+
+static void setInterferenceLocatorFrequency(uint32_t freq)
+{
+    geminiMode = 0;
+    Radio.SetFrequencyReg(freq, SX12XX_Radio_1);
+    if (isDualRadio())
+    {
+        Radio.SetFrequencyReg(freq, SX12XX_Radio_2);
+    }
+    Radio.RXnb();
+}
+
+static void applyInterferenceLocatorDualRadioListen(uint8_t rateIdx, uint32_t freq)
+{
+    geminiMode = 0;
+
+#if defined(RADIO_LR1121)
+    if (isDualRadio())
+    {
+        expresslrs_mod_settings_s *const ModParams = get_elrs_airRateConfig(rateIdx);
+        const bool invertIQ = UID[5] & 0x01;
+        const bool fsk = (ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 ||
+                          ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4);
+
+        // Configure each LR1121 independently on the same frequency/modulation
+        Radio.Config(ModParams->bw, ModParams->sf, ModParams->cr, freq,
+                     ModParams->PreambleLen, invertIQ, ModParams->PayloadLength, 0,
+                     fsk, (uint8_t)UID[5], (uint8_t)UID[4], SX12XX_Radio_1);
+        Radio.Config(ModParams->bw, ModParams->sf, ModParams->cr, freq,
+                     ModParams->PreambleLen, invertIQ, ModParams->PayloadLength, 0,
+                     fsk, (uint8_t)UID[5], (uint8_t)UID[4], SX12XX_Radio_2);
+    }
+#endif
+
+    setInterferenceLocatorFrequency(freq);
+}
+
+#if defined(DEBUG_LOG)
+static void interferenceLocatorDebugBanner()
+{
+    DBGLN("Setting %s Mode", FHSSconfig->domain);
+    DBGLN("Number of FHSS frequencies = %u", FHSSconfig->freq_count);
+    DBGLN("Interference locator: band=%s freq=%u dual=%u rssi1=%d rssi2=%d",
+          FHSSconfig->domain, Radio.currFreq, isDualRadio(), dualRSSI.rssi1, dualRSSI.rssi2);
+    LOGGING_UART.flush();
+}
+#endif
 
 static uint8_t getBestInterferenceLocatorRateIdx()
 {
@@ -353,32 +414,57 @@ static void updateInterferenceLocatorLinkStats()
     connectionHasModelMatch = true;
     teamraceHasModelMatch = true;
 
-    int16_t bestRssi = max(dualRSSI.rssi1, dualRSSI.rssi2);
-    dualRSSI.active_antenna = (dualRSSI.rssi1 >= dualRSSI.rssi2) ? 0 : 1;
+    int16_t bestRssi = -127;
+    if (interferenceLocatorRssiValid(dualRSSI.rssi1))
+        bestRssi = dualRSSI.rssi1;
+    if (interferenceLocatorRssiValid(dualRSSI.rssi2))
+        bestRssi = max(bestRssi, dualRSSI.rssi2);
+
+    if (interferenceLocatorRssiValid(dualRSSI.rssi1) || interferenceLocatorRssiValid(dualRSSI.rssi2))
+        dualRSSI.active_antenna = (dualRSSI.rssi1 >= dualRSSI.rssi2) ? 0 : 1;
+    else
+        dualRSSI.active_antenna = 0;
 
     CRSF::LinkStatistics.active_antenna = dualRSSI.active_antenna;
-    CRSF::LinkStatistics.uplink_RSSI_1 = -dualRSSI.rssi1;
-    CRSF::LinkStatistics.uplink_RSSI_2 = -dualRSSI.rssi2;
+    CRSF::LinkStatistics.uplink_RSSI_1 = interferenceLocatorRssiValid(dualRSSI.rssi1) ? (uint8_t)(-dualRSSI.rssi1) : 0;
+    CRSF::LinkStatistics.uplink_RSSI_2 = interferenceLocatorRssiValid(dualRSSI.rssi2) ? (uint8_t)(-dualRSSI.rssi2) : 0;
 
-    if (ExpressLRS_currAirRate_RFperfParams != nullptr)
+    if (ExpressLRS_currAirRate_Modparams != nullptr)
+    {
+        CRSF::LinkStatistics.rf_Mode = ExpressLRS_currAirRate_Modparams->enum_rate;
+    }
+
+    if (ExpressLRS_currAirRate_RFperfParams != nullptr && interferenceLocatorRssiValid(bestRssi))
     {
         CRSF::LinkStatistics.uplink_Link_quality = map(
             constrain(-bestRssi, ExpressLRS_currAirRate_RFperfParams->RXsensitivity, -50),
             ExpressLRS_currAirRate_RFperfParams->RXsensitivity, -50, 0, 100);
-        CRSF::LinkStatistics.rf_Mode = ExpressLRS_currAirRate_Modparams->enum_rate;
+    }
+    else
+    {
+        CRSF::LinkStatistics.uplink_Link_quality = 0;
     }
 }
 
 static void pollDualAntennaRSSI()
 {
-    if (!isDualRadio())
-        return;
-
     int8_t r1 = Radio.GetRssiInst(SX12XX_Radio_1);
-    int8_t r2 = Radio.GetRssiInst(SX12XX_Radio_2);
+    dualRSSI.rssi1 = (r1 < 0) ? LPF_UplinkRSSI0.update(r1) : 0;
 
-    dualRSSI.rssi1 = LPF_UplinkRSSI0.update(r1);
-    dualRSSI.rssi2 = LPF_UplinkRSSI1.update(r2);
+    if (isDualRadio())
+    {
+        int8_t r2 = Radio.GetRssiInst(SX12XX_Radio_2);
+        dualRSSI.rssi2 = (r2 < 0) ? LPF_UplinkRSSI1.update(r2) : 0;
+        // A single-radio TX leaves the other chip in FS; restore dual RX listen
+        if (r2 >= 0)
+        {
+            Radio.RXnb();
+        }
+    }
+    else
+    {
+        dualRSSI.rssi2 = -127;
+    }
     dualRSSI.last_update = millis();
 
 #if defined(DEBUG_LOG)
@@ -396,25 +482,29 @@ static void setupInterferenceLocatorRadio()
 {
     LockRFmode = true;
 
+#if defined(Regulatory_Domain_1500)
+    // EEPROM options.json may still hold a sub-GHz domain from a prior flash
+    firmwareOptions.domain = FHSS_DOMAIN_1500_INDEX;
+    FHSSrandomiseFHSSsequence(uidMacSeedGet());
+#endif
+
     uint8_t rateIdx = getBestInterferenceLocatorRateIdx();
     SetRFLinkRate(rateIdx, false);
     FHSSsetCurrIndex(0);
 
-    // Max TX power for telemetry back to handset / FC link-stat path
     POWERMGNT::setPower(POWERMGNT::getMaxPower());
 
     uint32_t freq = FHSSgetInitialFreq();
-    Radio.SetFrequencyReg(freq, SX12XX_Radio_1);
-    if (isDualRadio())
-    {
-        Radio.SetFrequencyReg(freq, SX12XX_Radio_2);
-    }
-    Radio.RXnb();
+    applyInterferenceLocatorDualRadioListen(rateIdx, freq);
 
     SendLinkStatstoFCForcedSends = 5;
 
-    DBGLN("Interference locator: band=%s rate=%u freq=%u pwr=%u",
-          FHSSconfig->domain, rateIdx, freq, POWERMGNT::currPower());
+    DBGLN("Interference locator: band=%s rate=%u freq=%u dual=%u pwr=%u",
+          FHSSconfig->domain, rateIdx, freq, isDualRadio(), POWERMGNT::currPower());
+#if defined(DEBUG_LOG)
+    pollDualAntennaRSSI();
+    interferenceLocatorDebugBanner();
+#endif
 }
 #endif
 
@@ -438,10 +528,7 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
 {
 #if defined(INTERFERENCE_LOCATOR_RX)
     pollDualAntennaRSSI();
-    if (!interferenceLocatorBothAntennasWeak())
-    {
-        updateInterferenceLocatorLinkStats();
-    }
+    updateInterferenceLocatorLinkStats();
     return;
 #endif
 
@@ -522,7 +609,8 @@ void SetRFLinkRate(uint8_t index, bool bindMode) // Set speed of RF link
 
     hwTimer::updateInterval(interval);
 
-    FHSSusePrimaryFreqBand = !(ModParams->radio_type == RADIO_TYPE_LR1121_LORA_2G4) && !(ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4);
+    FHSSusePrimaryFreqBand = !(ModParams->radio_type == RADIO_TYPE_LR1121_LORA_2G4) &&
+                             !(ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4);
     FHSSuseDualBand = ModParams->radio_type == RADIO_TYPE_LR1121_LORA_DUAL;
 
     Radio.Config(ModParams->bw, ModParams->sf, ModParams->cr, FHSSgetInitialFreq(),
@@ -1297,6 +1385,13 @@ static bool ICACHE_RAM_ATTR ProcessRfPacket_SYNC(uint32_t const now, OTA_Sync_s 
 
 bool ICACHE_RAM_ATTR ProcessRFPacket(SX12xxDriverCommon::rx_status const status)
 {
+#if defined(INTERFERENCE_LOCATOR_RX)
+    // Locator mode: ignore OTA packets (no hwTimer/TLM) but keep both radios in RX
+    (void)status;
+    Radio.RXnb();
+    return false;
+#endif
+
     if (status != SX12xxDriverCommon::SX12XX_RX_OK)
     {
         DBGVLN("HW CRC error");
@@ -1491,6 +1586,10 @@ void MspReceiveComplete()
     MspReceiver.Unlock();
 }
 
+#if defined(INTERFERENCE_LOCATOR_RX)
+#define INTERFERENCE_LOCATOR_DEBUG_BAUD 115200
+#endif
+
 static void setupSerial()
 {
     bool sbusSerialOutput = false;
@@ -1500,6 +1599,16 @@ static void setupSerial()
     bool hottTlmSerial = false;
 #endif
 
+#if defined(INTERFERENCE_LOCATOR_RX)
+    if (GPIO_PIN_RCSIGNAL_TX == UNDEF_PIN)
+    {
+        DBGLN("Interference locator: CRSF TX pin undefined in hardware.json");
+        SerialLogger = new NullStream();
+        serialIO = new SerialNOOP();
+        return;
+    }
+    serialBaud = firmwareOptions.uart_baud;
+#else
     if (OPT_CRSF_RCVR_NO_SERIAL)
     {
         // For PWM receivers with no serial pins defined, only turn on the Serial port if logging is on
@@ -1544,7 +1653,11 @@ static void setupSerial()
         serialBaud = 19200;
     }
 #endif
-    bool invert = config.GetSerialProtocol() == PROTOCOL_SBUS || config.GetSerialProtocol() == PROTOCOL_INVERTED_CRSF || config.GetSerialProtocol() == PROTOCOL_DJI_RS_PRO;
+#endif
+    bool invert = false;
+#if !defined(INTERFERENCE_LOCATOR_RX)
+    invert = config.GetSerialProtocol() == PROTOCOL_SBUS || config.GetSerialProtocol() == PROTOCOL_INVERTED_CRSF || config.GetSerialProtocol() == PROTOCOL_DJI_RS_PRO;
+#endif
 
 #ifdef PLATFORM_STM32
 #if defined(TARGET_R9SLIMPLUS_RX)
@@ -1632,7 +1745,7 @@ static void setupSerial()
     #endif
     // ARDUINO_CORE_INVERT_FIX PT2 end
 
-    Serial.begin(serialBaud, config, GPIO_PIN_RCSIGNAL_RX, GPIO_PIN_RCSIGNAL_TX, invert);
+    SERIAL_PROTOCOL_TX.begin(serialBaud, config, GPIO_PIN_RCSIGNAL_RX, GPIO_PIN_RCSIGNAL_TX, invert);
 #endif
 
     if (firmwareOptions.is_airport)
@@ -1662,12 +1775,21 @@ static void setupSerial()
         serialIO = new SerialCRSF(SERIAL_PROTOCOL_TX, SERIAL_PROTOCOL_RX);
     }
 
+#if defined(INTERFERENCE_LOCATOR_RX)
+    DBGLN("Interference locator serial: tx=%d rx=%d baud=%u", GPIO_PIN_RCSIGNAL_TX, GPIO_PIN_RCSIGNAL_RX, (unsigned)serialBaud);
+#endif
+
 #if defined(DEBUG_ENABLED)
+#if defined(INTERFERENCE_LOCATOR_RX) && defined(PLATFORM_ESP32)
+    USBSerial.begin(INTERFERENCE_LOCATOR_DEBUG_BAUD);
+    SerialLogger = &USBSerial;
+#else
 #if defined(PLATFORM_ESP32_S3) || defined(PLATFORM_ESP32_C3)
     USBSerial.begin(460800);
     SerialLogger = &USBSerial;
 #else
     SerialLogger = &Serial;
+#endif
 #endif
 #else
     SerialLogger = new NullStream();
@@ -1875,6 +1997,10 @@ static void setupRadio()
 
     Radio.RXdoneCallback = &RXdoneISR;
     Radio.TXdoneCallback = &TXdoneISR;
+
+#if defined(INTERFERENCE_LOCATOR_RX)
+    return;
+#endif
 
     scanIndex = config.GetRateInitialIdx();
     for (int i=0 ; i<RATE_MAX ; i++)
@@ -2119,19 +2245,27 @@ void EnterBindingModeSafely()
     EnterBindingMode();
 }
 
+#if defined(INTERFERENCE_LOCATOR_RX)
+static void sendInterferenceLocatorLinkStats()
+{
+    pollDualAntennaRSSI();
+    updateInterferenceLocatorLinkStats();
+    if (GPIO_PIN_RCSIGNAL_TX != UNDEF_PIN && serialIO != nullptr)
+    {
+        static_cast<SerialCRSF *>(serialIO)->sendLinkStatisticsNow();
+    }
+}
+#endif
+
 static void checkSendLinkStatsToFc(uint32_t now)
 {
     if (now - SendLinkStatstoFCintervalLastSent > SEND_LINK_STATS_TO_FC_INTERVAL)
     {
 #if defined(INTERFERENCE_LOCATOR_RX)
-        pollDualAntennaRSSI();
-        if (interferenceLocatorBothAntennasWeak())
-        {
-            return;
-        }
-        updateInterferenceLocatorLinkStats();
-        serialIO->queueLinkStatisticsPacket();
+        sendInterferenceLocatorLinkStats();
         SendLinkStatstoFCintervalLastSent = now;
+        if (SendLinkStatstoFCForcedSends)
+            --SendLinkStatstoFCForcedSends;
 #else
         // Only send link stats if we have a somewhat decent signal, otherwise the FC might be getting old/stale info and it's better to not send anything at all
         if ((connectionState != disconnected && connectionHasModelMatch && teamraceHasModelMatch) ||
@@ -2281,6 +2415,16 @@ void setup()
 {
     #if defined(TARGET_UNIFIED_RX)
     hardwareConfigured = options_init();
+#if defined(INTERFERENCE_LOCATOR_RX) && defined(Regulatory_Domain_1500)
+    firmwareOptions.domain = FHSS_DOMAIN_1500_INDEX;
+#endif
+#if defined(INTERFERENCE_LOCATOR_RX)
+#if defined(RCVR_UART_BAUD)
+    firmwareOptions.uart_baud = RCVR_UART_BAUD;
+#else
+    firmwareOptions.uart_baud = 420000;
+#endif
+#endif
     if (!hardwareConfigured)
     {
         // In the failure case we set the logging to the null logger so nothing crashes
@@ -2298,6 +2442,16 @@ void setup()
     }
     #else
     hardwareConfigured = options_init();
+#if defined(INTERFERENCE_LOCATOR_RX) && defined(Regulatory_Domain_1500)
+    firmwareOptions.domain = FHSS_DOMAIN_1500_INDEX;
+#endif
+#if defined(INTERFERENCE_LOCATOR_RX)
+#if defined(RCVR_UART_BAUD)
+    firmwareOptions.uart_baud = RCVR_UART_BAUD;
+#else
+    firmwareOptions.uart_baud = 420000;
+#endif
+#endif
     #endif
 
     if (hardwareConfigured)
@@ -2308,8 +2462,31 @@ void setup()
         // pre-initialise serial must be done before anything as some libs write
         // to the serial port and they'll block if the buffer fills
         #if defined(DEBUG_LOG)
+#if defined(INTERFERENCE_LOCATOR_RX) && defined(PLATFORM_ESP32)
+        USBSerial.begin(INTERFERENCE_LOCATOR_DEBUG_BAUD);
+        SerialLogger = &USBSerial;
+        DBGLN("DEBUG_LOG on USB @ %u baud (CRSF to FC @ %u)", (unsigned)INTERFERENCE_LOCATOR_DEBUG_BAUD, (unsigned)firmwareOptions.uart_baud);
+#elif defined(PLATFORM_ESP32_S3) || defined(PLATFORM_ESP32_C3)
+        USBSerial.begin(460800);
+        SerialLogger = &USBSerial;
+        DBGLN("DEBUG_LOG on USB @ 460800 baud");
+#elif defined(TARGET_UNIFIED_RX) && defined(PLATFORM_ESP32)
+        if (GPIO_PIN_RCSIGNAL_TX != UNDEF_PIN)
+        {
+            Serial.begin(serialBaud, SERIAL_8N1, GPIO_PIN_RCSIGNAL_RX, GPIO_PIN_RCSIGNAL_TX);
+        }
+        else
+        {
+            Serial.begin(serialBaud);
+        }
+        SerialLogger = &Serial;
+        DBGLN("DEBUG_LOG on CRSF UART @ %u baud", serialBaud);
+#else
         Serial.begin(serialBaud);
         SerialLogger = &Serial;
+        DBGLN("DEBUG_LOG on UART @ %u baud", serialBaud);
+#endif
+        SerialLogger->flush();
         #else
         SerialLogger = new NullStream();
         #endif
@@ -2347,10 +2524,15 @@ void setup()
         devicesInit();
 
         setupBindingFromConfig();
-        // InBindingMode = false; // 强制设置绑定状态为 false
-        // connectionState = connected;
+
+#if defined(INTERFERENCE_LOCATOR_RX) && defined(Regulatory_Domain_1500)
+        firmwareOptions.domain = FHSS_DOMAIN_1500_INDEX;
+#endif
 
         FHSSrandomiseFHSSsequence(uidMacSeedGet());
+#if defined(INTERFERENCE_LOCATOR_RX) && defined(DEBUG_LOG)
+        interferenceLocatorDebugBanner();
+#endif
 
         setupRadio();
 
@@ -2360,8 +2542,8 @@ void setup()
             // DBGLN("RF noise floor: %d dBm", RFnoiseFloor);
 
             MspReceiver.SetDataToReceive(MspData, ELRS_MSP_BUFFER);
-            Radio.RXnb();
 #if !defined(INTERFERENCE_LOCATOR_RX)
+            Radio.RXnb();
             hwTimer::init(HWtimerCallbackTick, HWtimerCallbackTock);
 #endif
         }
@@ -2388,6 +2570,10 @@ void setup()
 #endif
 
     devicesStart();
+
+#if defined(INTERFERENCE_LOCATOR_RX)
+    sendInterferenceLocatorLinkStats();
+#endif
 
     // setup() eats up some of this time, which can cause the first mode connection to fail.
     // Resetting the time here give the first mode a better chance of connection.
@@ -2471,6 +2657,16 @@ void loop()
     }
 
     checkSendLinkStatsToFc(now);
+
+#if defined(INTERFERENCE_LOCATOR_RX) && defined(DEBUG_LOG)
+    static uint32_t lastLocatorHeartbeatMs = 0;
+    if (now - lastLocatorHeartbeatMs >= 2000)
+    {
+        lastLocatorHeartbeatMs = now;
+        pollDualAntennaRSSI();
+        interferenceLocatorDebugBanner();
+    }
+#endif
 
     if ((RXtimerState == tim_tentative) && ((now - GotConnectionMillis) > ConsiderConnGoodMillis) && (abs(LPF_OffsetDx.value()) <= 5))
     {
