@@ -70,6 +70,9 @@
 
 //// CONSTANTS ////
 #define SEND_LINK_STATS_TO_FC_INTERVAL 100
+#if defined(INTERFERENCE_LOCATOR_RX)
+#define INTERFERENCE_LOCATOR_RSSI_INTERVAL_MS 20
+#endif
 #define DIVERSITY_ANTENNA_INTERVAL 5
 #define DIVERSITY_ANTENNA_RSSI_TRIGGER 5
 #define PACKET_TO_TOCK_SLACK 200 // Desired buffer time between Packet ISR and Tock ISR
@@ -476,6 +479,12 @@ static void pollDualAntennaRSSI()
         DBGLN("RSSI ant1=%d ant2=%d delta=%d", dualRSSI.rssi1, dualRSSI.rssi2, dualRSSI.rssi1 - dualRSSI.rssi2);
     }
 #endif
+}
+
+static void updateInterferenceLocatorRssiOutput()
+{
+    pollDualAntennaRSSI();
+    updateInterferenceLocatorLinkStats();
 }
 
 static void setupInterferenceLocatorRadio()
@@ -2248,8 +2257,7 @@ void EnterBindingModeSafely()
 #if defined(INTERFERENCE_LOCATOR_RX)
 static void sendInterferenceLocatorLinkStats()
 {
-    pollDualAntennaRSSI();
-    updateInterferenceLocatorLinkStats();
+    updateInterferenceLocatorRssiOutput();
     if (GPIO_PIN_RCSIGNAL_TX != UNDEF_PIN && serialIO != nullptr)
     {
         static_cast<SerialCRSF *>(serialIO)->sendLinkStatisticsNow();
@@ -2560,7 +2568,7 @@ void setup()
     if (connectionState != radioFailed)
     {
         setupInterferenceLocatorRadio();
-        updateInterferenceLocatorLinkStats();
+        updateInterferenceLocatorRssiOutput();
     }
 #endif
 
@@ -2658,14 +2666,21 @@ void loop()
 
     checkSendLinkStatsToFc(now);
 
-#if defined(INTERFERENCE_LOCATOR_RX) && defined(DEBUG_LOG)
+#if defined(INTERFERENCE_LOCATOR_RX)
+    static uint32_t lastLocatorRssiMs = 0;
+    if (now - lastLocatorRssiMs >= INTERFERENCE_LOCATOR_RSSI_INTERVAL_MS)
+    {
+        lastLocatorRssiMs = now;
+        updateInterferenceLocatorRssiOutput();
+    }
+#if defined(DEBUG_LOG)
     static uint32_t lastLocatorHeartbeatMs = 0;
     if (now - lastLocatorHeartbeatMs >= 2000)
     {
         lastLocatorHeartbeatMs = now;
-        pollDualAntennaRSSI();
         interferenceLocatorDebugBanner();
     }
+#endif
 #endif
 
     if ((RXtimerState == tim_tentative) && ((now - GotConnectionMillis) > ConsiderConnGoodMillis) && (abs(LPF_OffsetDx.value()) <= 5))

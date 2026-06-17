@@ -1,10 +1,13 @@
 -DMY_BINDING_PHRASE="12345678"
 #-DRegulatory_Domain_FCC_915
+# 2.4GHz interference locator (fixed FHSS[0], dual LR1121 RX, GetRssiInst -> CRSF ch0/ch1):
 #-DRegulatory_Domain_ISM_2400
+# 1.5GHz interference locator (same behaviour on 1.5G band):
 -DRegulatory_Domain_1500
 -DAUTO_WIFI_ON_INTERVAL="60"
 -DLOCK_ON_FIRST_CONNECTION
 -DINTERFERENCE_LOCATOR_RX
-# CRSF to FC uses default 420000; debug log uses USB @ 115200 when DEBUG_LOG is enabled
+# CRSF to FC @ 420000; Link Statistics only (uplink_RSSI_1/2), polled every 20ms, sent every 100ms
+# Debug log on USB @ 115200 when DEBUG_LOG is enabled
 #-DDEBUG_LOG
 #-DDEBUG_LOG_VERBOSE

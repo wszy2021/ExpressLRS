@@ -147,15 +147,14 @@ typedef enum : uint8_t
 
 #if defined(INTERFERENCE_LOCATOR_RX)
 typedef struct dual_rssi_s {
-    int16_t rssi1;        // 天线1的RSSI值 (dBm)
-    int16_t rssi2;        // 天线2的RSSI值 (dBm)
-    uint8_t active_antenna; // 当前活动天线 (0或1)
-    uint32_t last_update;  // 最后更新时间戳
+    int16_t rssi1;        // antenna 1 RSSI (dBm, from GetRssiInst)
+    int16_t rssi2;        // antenna 2 RSSI (dBm, from GetRssiInst)
+    uint8_t active_antenna; // stronger antenna (0 or 1)
+    uint32_t last_update;  // last poll timestamp (ms)
 } dual_rssi_t;
 
 extern dual_rssi_t dualRSSI;
 
-// Filter: skip Betaflight updates when both antennas are at or below this (dBm)
 #ifndef INTERFERENCE_RSSI_WEAK_THRESHOLD_DBM
 #define INTERFERENCE_RSSI_WEAK_THRESHOLD_DBM (-80)
 #endif
