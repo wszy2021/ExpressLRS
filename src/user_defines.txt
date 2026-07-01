@@ -29,10 +29,13 @@
 #-DRegulatory_Domain_EU_CE_2400
 #-DRegulatory_Domain_CN_315
 #-DRegulatory_Domain_CN_1500
--DRegulatory_Domain_CN_1900
+#-DRegulatory_Domain_CN_1900
+-DRegulatory_Domain_CN_532
+#-DRegulatory_Domain_CN_2100
+#-DRegulatory_Domain_CN_2600
 
 #-DGPIO10L_OUTPUT_HIGH=1
--DGPIO18H_OUTPUT_HIGH=1
+#-DGPIO18H_OUTPUT_HIGH=1
 
 ### PERFORMANCE OPTIONS: ###
 
@@ -88,8 +91,8 @@
 ### Debugging options ###
 
 # Turn on debug messages, if disabled then all debugging options (starting with DEBUG_) are disabled
--DDEBUG_LOG
--DRCVR_UART_BAUD=115200
+#-DDEBUG_LOG
+#-DRCVR_UART_BAUD=115200
 
 # For an ESP32S3 MCU, there are two options:
 # 1 - Pull-up on GPIO3, USB for JTAG (on MI_02), debug logging uses main UART.

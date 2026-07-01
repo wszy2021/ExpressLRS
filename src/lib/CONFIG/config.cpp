@@ -663,6 +663,12 @@ TxConfig::SetDefaults(bool commit)
             SetRate(enumRatetoIndex(RATE_LORA_1500_250HZ));
             #elif defined(Regulatory_Domain_CN_315)
             SetRate(enumRatetoIndex(RATE_LORA_315_250HZ));
+            #elif defined(Regulatory_Domain_CN_2600)
+            SetRate(enumRatetoIndex(RATE_LORA_2600_250HZ));
+            #elif defined(Regulatory_Domain_CN_2100)
+            SetRate(enumRatetoIndex(RATE_LORA_2100_250HZ));
+            #elif defined(Regulatory_Domain_CN_532)
+            SetRate(enumRatetoIndex(RATE_LORA_532_250HZ));
             #else
             SetRate(enumRatetoIndex(POWER_OUTPUT_VALUES_COUNT == 0 ? RATE_LORA_250HZ : RATE_LORA_200HZ));
             #endif

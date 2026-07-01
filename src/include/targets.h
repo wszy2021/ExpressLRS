@@ -281,6 +281,9 @@ extern bool pwmSerialDefined;
 #undef Regulatory_Domain_CN_315
 #undef Regulatory_Domain_CN_1500
 #undef Regulatory_Domain_CN_1900
+#undef Regulatory_Domain_CN_532
+#undef Regulatory_Domain_CN_2100
+#undef Regulatory_Domain_CN_2600
 
 #elif defined(RADIO_SX127X) || defined(RADIO_LR1121)
 #if !(defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_FCC_915) || \
@@ -288,13 +291,21 @@ extern bool pwmSerialDefined;
         defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433) || \
         defined(Regulatory_Domain_US_433) || defined(Regulatory_Domain_US_433_WIDE) || \
         defined(Regulatory_Domain_CN_315) || defined(Regulatory_Domain_CN_1500) || \
-        defined(Regulatory_Domain_CN_1900) || \
+        defined(Regulatory_Domain_CN_1900) || defined(Regulatory_Domain_CN_532) || \
+        defined(Regulatory_Domain_CN_2100) || defined(Regulatory_Domain_CN_2600) || \
         defined(UNIT_TEST))
 #error "Regulatory_Domain is not defined for 900MHz device. Check user_defines.txt!"
 #endif
-#if defined(Regulatory_Domain_CN_315) || defined(Regulatory_Domain_CN_1500) || defined(Regulatory_Domain_CN_1900)
+#if defined(Regulatory_Domain_CN_315) || defined(Regulatory_Domain_CN_1500) || defined(Regulatory_Domain_CN_1900) || \
+    defined(Regulatory_Domain_CN_532) || defined(Regulatory_Domain_CN_2100) || defined(Regulatory_Domain_CN_2600)
 #define ELRS_CN_SINGLE_BAND 1
-#if defined(Regulatory_Domain_CN_1900)
+#if defined(Regulatory_Domain_CN_2600)
+#define ELRS_COMPILED_DOMAIN 13
+#elif defined(Regulatory_Domain_CN_2100)
+#define ELRS_COMPILED_DOMAIN 12
+#elif defined(Regulatory_Domain_CN_532)
+#define ELRS_COMPILED_DOMAIN 11
+#elif defined(Regulatory_Domain_CN_1900)
 #define ELRS_COMPILED_DOMAIN 10
 #elif defined(Regulatory_Domain_CN_1500)
 #define ELRS_COMPILED_DOMAIN 9

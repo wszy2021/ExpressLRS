@@ -62,6 +62,12 @@ __attribute__ ((used)) static firmware_options_t flashedOptions = {
     .domain = 9,
     #elif defined(Regulatory_Domain_CN_1900)
     .domain = 10,
+    #elif defined(Regulatory_Domain_CN_532)
+    .domain = 11,
+    #elif defined(Regulatory_Domain_CN_2100)
+    .domain = 12,
+    #elif defined(Regulatory_Domain_CN_2600)
+    .domain = 13,
     #else
     #error No regulatory domain defined, please define one in user_defines.txt
     #endif

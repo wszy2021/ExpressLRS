@@ -120,6 +120,27 @@ typedef enum : uint8_t
     RATE_LORA_1900_100HZ,
     RATE_LORA_1900_100HZ_8CH,
     RATE_LORA_1900_50HZ,
+    RATE_FSK_532_1000HZ_8CH,
+    RATE_LORA_532_250HZ,
+    RATE_LORA_532_200HZ_8CH,
+    RATE_LORA_532_200HZ,
+    RATE_LORA_532_100HZ,
+    RATE_LORA_532_100HZ_8CH,
+    RATE_LORA_532_50HZ,
+    RATE_FSK_2100_1000HZ_8CH,
+    RATE_LORA_2100_250HZ,
+    RATE_LORA_2100_200HZ_8CH,
+    RATE_LORA_2100_200HZ,
+    RATE_LORA_2100_100HZ,
+    RATE_LORA_2100_100HZ_8CH,
+    RATE_LORA_2100_50HZ,
+    RATE_FSK_2600_1000HZ_8CH,
+    RATE_LORA_2600_250HZ,
+    RATE_LORA_2600_200HZ_8CH,
+    RATE_LORA_2600_200HZ,
+    RATE_LORA_2600_100HZ,
+    RATE_LORA_2600_100HZ_8CH,
+    RATE_LORA_2600_50HZ,
 } expresslrs_RFrates_e;
 
 enum {
@@ -128,11 +149,17 @@ enum {
     RADIO_TYPE_LR1121_LORA_315,
     RADIO_TYPE_LR1121_LORA_1500,
     RADIO_TYPE_LR1121_LORA_1900,
+    RADIO_TYPE_LR1121_LORA_532,
+    RADIO_TYPE_LR1121_LORA_2100,
+    RADIO_TYPE_LR1121_LORA_2600,
     RADIO_TYPE_LR1121_LORA_2G4,
     RADIO_TYPE_LR1121_GFSK_900,
     RADIO_TYPE_LR1121_GFSK_315,
     RADIO_TYPE_LR1121_GFSK_1500,
     RADIO_TYPE_LR1121_GFSK_1900,
+    RADIO_TYPE_LR1121_GFSK_532,
+    RADIO_TYPE_LR1121_GFSK_2100,
+    RADIO_TYPE_LR1121_GFSK_2600,
     RADIO_TYPE_LR1121_GFSK_2G4,
     RADIO_TYPE_LR1121_LORA_DUAL,
     RADIO_TYPE_SX128x_LORA,
@@ -305,19 +332,26 @@ enum eAuxChannels : uint8_t
 extern SX127xDriver Radio;
 
 #elif defined(RADIO_LR1121)
-#if defined(Regulatory_Domain_CN_1900) || defined(Regulatory_Domain_CN_1500) || defined(Regulatory_Domain_CN_315)
+#if defined(Regulatory_Domain_CN_1900) || defined(Regulatory_Domain_CN_1500) || defined(Regulatory_Domain_CN_315) || \
+    defined(Regulatory_Domain_CN_532) || defined(Regulatory_Domain_CN_2100) || defined(Regulatory_Domain_CN_2600)
 // Dedicated CN band builds: keep indices 0-6 so config rate fields (4-bit) work correctly
 #define RATE_MAX 7
 #if defined(Regulatory_Domain_CN_1900)
 #define RATE_BINDING RATE_LORA_1900_50HZ
 #elif defined(Regulatory_Domain_CN_1500)
 #define RATE_BINDING RATE_LORA_1500_50HZ
+#elif defined(Regulatory_Domain_CN_2600)
+#define RATE_BINDING RATE_LORA_2600_50HZ
+#elif defined(Regulatory_Domain_CN_2100)
+#define RATE_BINDING RATE_LORA_2100_50HZ
+#elif defined(Regulatory_Domain_CN_532)
+#define RATE_BINDING RATE_LORA_532_50HZ
 #else
 #define RATE_BINDING RATE_LORA_315_50HZ
 #endif
 #define RATE_DUALBAND_BINDING 6
 #else
-#define RATE_MAX 37
+#define RATE_MAX 58
 #define RATE_BINDING RATE_LORA_50HZ
 #define RATE_DUALBAND_BINDING 9 // 2.4GHz 50Hz
 #endif

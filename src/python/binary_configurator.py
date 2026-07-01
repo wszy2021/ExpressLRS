@@ -40,6 +40,9 @@ class RegulatoryDomain(Enum):
     cn_315 = 'cn_315'
     cn_1500 = 'cn_1500'
     cn_1900 = 'cn_1900'
+    cn_532 = 'cn_532'
+    cn_2100 = 'cn_2100'
+    cn_2600 = 'cn_2600'
 
     def __str__(self):
         return self.value
@@ -212,6 +215,12 @@ def domain_number(domain):
         return 9
     elif domain == RegulatoryDomain.cn_1900:
         return 10
+    elif domain == RegulatoryDomain.cn_532:
+        return 11
+    elif domain == RegulatoryDomain.cn_2100:
+        return 12
+    elif domain == RegulatoryDomain.cn_2600:
+        return 13
 
 
 def patch_firmware(options, mm, pos, args):

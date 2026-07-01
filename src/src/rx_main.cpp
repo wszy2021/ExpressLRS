@@ -368,7 +368,7 @@ void SetRFLinkRate(uint8_t index, bool bindMode) // Set speed of RF link
                  , uidMacSeedGet(), OtaCrcInitializer, (ModParams->radio_type == RADIO_TYPE_SX128x_FLRC)
 #endif
 #if defined(RADIO_LR1121)
-               , ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4, (uint8_t)UID[5], (uint8_t)UID[4]
+               , ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_532 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2100 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2600 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4, (uint8_t)UID[5], (uint8_t)UID[4]
 #endif
                  );
 
@@ -377,7 +377,7 @@ void SetRFLinkRate(uint8_t index, bool bindMode) // Set speed of RF link
     {
         Radio.Config(ModParams->bw2, ModParams->sf2, ModParams->cr2, FHSSgetInitialGeminiFreq(),
                     ModParams->PreambleLen2, invertIQ, ModParams->PayloadLength,
-                    ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4,
+                    ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_315 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_532 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1500 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_1900 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2100 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2600 || ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4,
                     (uint8_t)UID[5], (uint8_t)UID[4], SX12XX_Radio_2);
     }
 #endif

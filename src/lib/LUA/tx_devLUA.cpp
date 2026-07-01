@@ -28,8 +28,27 @@
 #elif defined(Regulatory_Domain_CN_315)
 #define STR_LUA_PACKETRATES \
     "50 315M;100 315M;100 Full 315M;200 315M;200 Full 315M;250 315M;K1000 Full 315M"
-#else
+#elif defined(Regulatory_Domain_CN_2600)
 #define STR_LUA_PACKETRATES \
+    "50 2.6G;100 2.6G;100 Full 2.6G;200 2.6G;200 Full 2.6G;250 2.6G;K1000 Full 2.6G"
+#elif defined(Regulatory_Domain_CN_2100)
+#define STR_LUA_PACKETRATES \
+    "50 2.1G;100 2.1G;100 Full 2.1G;200 2.1G;200 Full 2.1G;250 2.1G;K1000 Full 2.1G"
+#elif defined(Regulatory_Domain_CN_532)
+#define STR_LUA_PACKETRATES \
+    "50 532M;100 532M;100 Full 532M;200 532M;200 Full 532M;250 532M;K1000 Full 532M"
+#else
+// IMPORTANT: This list must contain exactly RATE_MAX (58) entries and be ordered to match
+// ExpressLRS_AirRateConfig in reverse (entry 0 = highest rate index, last entry = rate index 0).
+// recalculatePacketRateOptions() walks the rate table and this list in lockstep, so a mismatch
+// in count/order produces blank entries in the handset's Packet Rate selection.
+#define STR_LUA_PACKETRATES \
+    "50 532M;100 532M;100 Full 532M;200 532M;200 Full 532M;250 532M;K1000 Full 532M;" \
+    "50 2.1G;100 2.1G;100 Full 2.1G;200 2.1G;200 Full 2.1G;250 2.1G;K1000 Full 2.1G;" \
+    "50 2.6G;100 2.6G;100 Full 2.6G;200 2.6G;200 Full 2.6G;250 2.6G;K1000 Full 2.6G;" \
+    "50 1.9G;100 1.9G;100 Full 1.9G;200 1.9G;200 Full 1.9G;250 1.9G;K1000 Full 1.9G;" \
+    "50 1.5G;100 1.5G;100 Full 1.5G;200 1.5G;200 Full 1.5G;250 1.5G;K1000 Full 1.5G;" \
+    "50 315M;100 315M;100 Full 315M;200 315M;200 Full 315M;250 315M;K1000 Full 315M;" \
     "K1000 Full Low Band;DK500 2.4G;200 Full Low Band;250 Low Band;X100 Full;X150;" \
     "50 2.4G;100 Full 2.4G;150 2.4G;250 2.4G;333 Full 2.4G;500 2.4G;" \
     "50 Low Band;100 Low Band;100 Full Low Band;200 Low Band"
