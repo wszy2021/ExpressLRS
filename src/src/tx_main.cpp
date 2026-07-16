@@ -82,11 +82,11 @@ static volatile bool ModelUpdatePending;
 
 uint8_t MSPDataPackage[5];
 #if defined(ELRS_CN_SINGLE_BAND)
-#define BindingSpamAmount 300
+#define BindingSpamAmount 100
 #else
 #define BindingSpamAmount 25
 #endif
-static uint8_t BindingSendCount;
+static uint16_t BindingSendCount;
 bool RxWiFiReadyToSend = false;
 
 bool headTrackingEnabled = false;
@@ -377,7 +377,12 @@ void SetRFLinkRate(uint8_t index) // Set speed of RF link
   expresslrs_mod_settings_s *const ModParams = get_elrs_airRateConfig(index);
   expresslrs_rf_pref_params_s *const RFperf = get_elrs_RFperfParams(index);
   // Binding always uses invertIQ
+  // CN S-band (1.5/1.9/2.1/2.6G): always InvertIQ like bind. Switching to UID-bit IQ
+  // after bind has been observed to prevent sync while bind MSP (IQ=1) works.
   bool invertIQ = InBindingMode || (UID[5] & 0x01);
+#if defined(ELRS_CN_SINGLE_BAND)
+  invertIQ = true;
+#endif
   // RX always validates bind packets in smWideOr8ch; match that during binding
   OtaSwitchMode_e newSwitchMode = InBindingMode ? smWideOr8ch : (OtaSwitchMode_e)config.GetSwitchMode();
 
@@ -405,6 +410,11 @@ void SetRFLinkRate(uint8_t index) // Set speed of RF link
 
   FHSSusePrimaryFreqBand = !(ModParams->radio_type == RADIO_TYPE_LR1121_LORA_2G4) && !(ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4);
   FHSSuseDualBand = ModParams->radio_type == RADIO_TYPE_LR1121_LORA_DUAL;
+#if defined(ELRS_CN_SINGLE_BAND)
+  // Dedicated CN builds have no 2.4G FHSS table; never leave primary band.
+  FHSSusePrimaryFreqBand = true;
+  FHSSuseDualBand = false;
+#endif
 
   Radio.Config(ModParams->bw, ModParams->sf, ModParams->cr, FHSSgetInitialFreq(),
                ModParams->PreambleLen, invertIQ, ModParams->PayloadLength
@@ -491,6 +501,15 @@ void injectBackpackPanTiltRollData(uint32_t const now)
 #endif
 }
 
+void ResendUIDOverMSP()
+{
+  // Re-queue bind payload without resetting BindingSendCount
+  MSPDataPackage[0] = MSP_ELRS_BIND;
+  memcpy(&MSPDataPackage[1], &UID[2], 4);
+  MspSender.ResetState();
+  MspSender.SetDataToTransmit(MSPDataPackage, 5);
+}
+
 void ICACHE_RAM_ATTR SendRCdataToRF()
 {
   // Do not send a stale channels packet to the RX if one has not been received from the handset
@@ -500,9 +519,11 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
   uint32_t lastRcData = handset->GetRCdataLastRecv();
   if (!InBindingMode && lastRcData && (micros() - lastRcData > 1000000))
   {
-    // The tx is in Mavlink mode and without a valid crsf or RC input.  Do not send stale or fake zero packet RC!
-    // Only send sync and MSP packets.
-    if (config.GetLinkMode() == TX_MAVLINK_MODE)
+    // RC went stale (common during bind spam, or handset only sent the bind CMD).
+    // Still send sync/MSP so the RX can lock — especially critical on CN 80-ch
+    // where the post-bind listen window is short. Only suppress stale RC data.
+    // When already connected, go fully silent so the RX will failsafe.
+    if (config.GetLinkMode() == TX_MAVLINK_MODE || connectionState == disconnected)
     {
       dontSendChannelData = true;
     }
@@ -514,9 +535,14 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
 
   if (InBindingMode)
   {
+    // MSP finishes after a few packages; keep re-arming bind spam until BindingSpamAmount
     if (!MspSender.IsActive())
     {
-      return;
+      if (BindingSendCount > BindingSpamAmount)
+      {
+        return;
+      }
+      ResendUIDOverMSP();
     }
     busyTransmitting = true;
     WORD_ALIGNED_ATTR OTA_Packet_s otaPkt = {0};
@@ -555,8 +581,17 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
 
   uint8_t NonceFHSSresult = OtaNonce % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
 
-  // Sync spam only happens on slot 1 and 2 and can't be disabled
-  if ((syncSpamCounter || (syncSpamCounterAfterRateChange && FHSSonSyncChannel())) && (NonceFHSSresult == 1 || NonceFHSSresult == 2))
+#if defined(ELRS_CN_SINGLE_BAND)
+  // Post-bind: RX only listens on the sync FHSS frequency. While syncSpamCounter
+  // is active we hold that channel (TXdoneISR) and send sync every packet.
+  const bool cnPostBindSyncBlast = syncSpamCounter && connectionState == disconnected;
+#else
+  const bool cnPostBindSyncBlast = false;
+#endif
+
+  // Sync spam only happens on slot 1 and 2 and can't be disabled (except CN blast)
+  if (cnPostBindSyncBlast ||
+      ((syncSpamCounter || (syncSpamCounterAfterRateChange && FHSSonSyncChannel())) && (NonceFHSSresult == 1 || NonceFHSSresult == 2)))
   {
     otaPkt.std.type = PACKET_TYPE_SYNC;
     GenerateSyncPacketData(OtaIsFullRes ? &otaPkt.full.sync.sync : &otaPkt.std.sync);
@@ -907,26 +942,37 @@ void ICACHE_RAM_ATTR TXdoneISR()
     // If the next packet should be on the next FHSS frequency, do the hop
     if (!InBindingMode && modResult == 0)
     {
-      // Gemini mode
-      // If using DualBand always set the correct frequency band to the radios.  The HighFreq/LowFreq Tx amp is set during config.
-      if ((isDualRadio() && config.GetAntennaMode() == TX_RADIO_MODE_GEMINI) || FHSSuseDualBand)
+#if defined(ELRS_CN_SINGLE_BAND)
+      // Hold sync channel while post-bind sync blast is running. With 80 FHSS
+      // channels, hopping would burn most syncSpam packets on freqs the RX
+      // (parked on sync) can never hear.
+      const bool holdSyncChannel = syncSpamCounter && connectionState == disconnected;
+#else
+      const bool holdSyncChannel = false;
+#endif
+      if (!holdSyncChannel)
       {
-        // Optimises the SPI traffic order.
-        if (Radio.GetProcessingPacketRadio() == SX12XX_Radio_1)
+        // Gemini mode
+        // If using DualBand always set the correct frequency band to the radios.  The HighFreq/LowFreq Tx amp is set during config.
+        if ((isDualRadio() && config.GetAntennaMode() == TX_RADIO_MODE_GEMINI) || FHSSuseDualBand)
         {
-          const uint32_t freqRadio = FHSSgetNextFreq();
-          Radio.SetFrequencyReg(FHSSgetGeminiFreq(), SX12XX_Radio_2, doRx);
-          Radio.SetFrequencyReg(freqRadio, SX12XX_Radio_1, doRx);
+          // Optimises the SPI traffic order.
+          if (Radio.GetProcessingPacketRadio() == SX12XX_Radio_1)
+          {
+            const uint32_t freqRadio = FHSSgetNextFreq();
+            Radio.SetFrequencyReg(FHSSgetGeminiFreq(), SX12XX_Radio_2, doRx);
+            Radio.SetFrequencyReg(freqRadio, SX12XX_Radio_1, doRx);
+          }
+          else
+          {
+            Radio.SetFrequencyReg(FHSSgetNextFreq(), SX12XX_Radio_1, doRx);
+            Radio.SetFrequencyReg(FHSSgetGeminiFreq(), SX12XX_Radio_2, doRx);
+          }
         }
         else
         {
-          Radio.SetFrequencyReg(FHSSgetNextFreq(), SX12XX_Radio_1, doRx);
-          Radio.SetFrequencyReg(FHSSgetGeminiFreq(), SX12XX_Radio_2, doRx);
+          Radio.SetFrequencyReg(FHSSgetNextFreq(), SX12XX_Radio_All, doRx);
         }
-      }
-      else
-      {
-        Radio.SetFrequencyReg(FHSSgetNextFreq(), SX12XX_Radio_All, doRx);
       }
     }
     else if (doRx)
@@ -1078,8 +1124,10 @@ static void EnterBindingMode()
   // Start transmitting again
   hwTimer::resume();
 
-  DBGLN("Entered binding mode: rate=%u domain=%s freq=%u crcInit=0 interval=%uus",
-        bindRate, FHSSconfig->domain, Radio.currFreq, ExpressLRS_currAirRate_Modparams->interval);
+  DBGLN("Entered binding mode: rate=%u domain=%s freq=%u primary=%u radio_type=%u interval=%u",
+        bindRate, FHSSgetRegulatoryDomain(), Radio.currFreq,
+        (unsigned)FHSSusePrimaryFreqBand, (unsigned)ExpressLRS_currAirRate_Modparams->radio_type,
+        ExpressLRS_currAirRate_Modparams->interval);
 }
 
 static void ExitBindingMode()
@@ -1091,13 +1139,40 @@ static void ExitBindingMode()
 
   // Reset CRCInit to UID-defined value
   OtaUpdateCrcInitFromUid();
+  FHSSrandomiseFHSSsequence(uidMacSeedGet());
   InBindingMode = false; // Clear binding mode before SetRFLinkRate() for correct IQ
+  busyTransmitting = false;
 
-  UARTconnected();
+  // Do NOT call UARTconnected() here — it would enter awaitingModelId and silence
+  // the TX for DisconnectTimeoutMs (~5s). On CN 80-ch domains the RX only dwells
+  // on the default 250Hz for a few seconds after bind, so that silence misses it.
+#if defined(ELRS_CN_SINGLE_BAND)
+  // Stay on bind rate (50Hz) after bind so RF params match the path that just
+  // worked for MSP bind; sync advertises this same rate. Switch to 250Hz later.
+  auto index = enumRatetoIndex(RATE_BINDING);
+#else
+  auto index = adjustPacketRateForBaud(config.GetRate());
+#endif
+  config.SetRate(index);
+  // Force full radio reconfigure even if rate/IQ unchanged (bind used CRCInit=0)
+  ExpressLRS_currAirRate_Modparams = nullptr;
+  SetRFLinkRate(index);
+  // Bind forced TlmDenom=1; restore before sync spam so TX/RX TLM slots match
+  ExpressLRS_currTlmDenom = TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval);
+  connectionState = disconnected;
+  rfModeLastChangedMS = millis();
+#if defined(ELRS_CN_SINGLE_BAND)
+  // Blast sync on the sync channel only (see TXdoneISR hop hold). RX listens there.
+  syncSpamCounter = 100;
+  syncSpamCounterAfterRateChange = 100;
+#else
+  syncSpamCounter = syncSpamAmount;
+  syncSpamCounterAfterRateChange = syncSpamAmountAfterRateChange;
+#endif
+  hwTimer::resume();
 
-  SetRFLinkRate(config.GetRate()); //return to original rate
-
-  DBGLN("Exiting binding mode");
+  DBGLN("Exiting binding mode, rate=%u freq=%u crcInit=%x iq=%u syncSpam=%u",
+        index, Radio.currFreq, OtaCrcInitializer, (unsigned)Radio.IQinverted, syncSpamCounter);
 }
 
 void EnterBindingModeSafely()
@@ -1533,6 +1608,10 @@ void setup()
 #endif
 
   devicesStart();
+  #ifdef TX_LED_ON_VALUE
+      pinMode(15, OUTPUT);
+      digitalWrite(15, 0); 
+  #endif
 
   if (firmwareOptions.is_airport)
   {

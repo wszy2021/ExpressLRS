@@ -29,13 +29,14 @@
 #-DRegulatory_Domain_EU_CE_2400
 #-DRegulatory_Domain_CN_315
 #-DRegulatory_Domain_CN_1500
-#-DRegulatory_Domain_CN_1900
--DRegulatory_Domain_CN_532
+-DRegulatory_Domain_CN_1900
+#-DRegulatory_Domain_CN_532
 #-DRegulatory_Domain_CN_2100
 #-DRegulatory_Domain_CN_2600
 
 #-DGPIO10L_OUTPUT_HIGH=1
 #-DGPIO18H_OUTPUT_HIGH=1
+#-DTX_LED_ON_VALUE=1
 
 ### PERFORMANCE OPTIONS: ###
 
@@ -91,7 +92,7 @@
 ### Debugging options ###
 
 # Turn on debug messages, if disabled then all debugging options (starting with DEBUG_) are disabled
-#-DDEBUG_LOG
+-DDEBUG_LOG
 #-DRCVR_UART_BAUD=115200
 
 # For an ESP32S3 MCU, there are two options:
@@ -100,7 +101,7 @@
 #-DESP32_S3_USB_JTAG_ENABLED
 
 # Use DEBUG_LOG_VERBOSE instead (or both) to see verbose debug logging (spammy stuff)
--DDEBUG_LOG_VERBOSE
+#-DDEBUG_LOG_VERBOSE
 
 # Print a letter for each packet received or missed (RX debugging)
 #-DDEBUG_RX_SCOREBOARD

@@ -350,7 +350,12 @@ void SetRFLinkRate(uint8_t index, bool bindMode) // Set speed of RF link
     expresslrs_rf_pref_params_s *const RFperf = get_elrs_RFperfParams(index);
 
     // Binding always uses invertIQ
+    // CN S-band: keep InvertIQ=true after bind (same as TX) so post-bind sync matches
+    // the RF path that successfully delivered bind MSP.
     bool invertIQ = bindMode || (UID[5] & 0x01);
+#if defined(ELRS_CN_SINGLE_BAND)
+    invertIQ = true;
+#endif
 
     uint32_t interval = ModParams->interval;
 #if defined(DEBUG_FREQ_CORRECTION) && defined(RADIO_SX128X)
@@ -361,6 +366,10 @@ void SetRFLinkRate(uint8_t index, bool bindMode) // Set speed of RF link
 
     FHSSusePrimaryFreqBand = !(ModParams->radio_type == RADIO_TYPE_LR1121_LORA_2G4) && !(ModParams->radio_type == RADIO_TYPE_LR1121_GFSK_2G4);
     FHSSuseDualBand = ModParams->radio_type == RADIO_TYPE_LR1121_LORA_DUAL;
+#if defined(ELRS_CN_SINGLE_BAND)
+    FHSSusePrimaryFreqBand = true;
+    FHSSuseDualBand = false;
+#endif
 
     Radio.Config(ModParams->bw, ModParams->sf, ModParams->cr, FHSSgetInitialFreq(),
                  ModParams->PreambleLen, invertIQ, ModParams->PayloadLength
@@ -1107,9 +1116,18 @@ bool ICACHE_RAM_ATTR ProcessRFPacket(SX12xxDriverCommon::rx_status const status)
 {
     if (status != SX12xxDriverCommon::SX12XX_RX_OK)
     {
-        if (!InBindingMode)
+        // Log a few HW CRC fails while disconnected — proves RF energy is seen
+        // but demod/params don't match (rate/IQ/BW). Silence = TX not heard at all.
+        if (!InBindingMode && connectionState == disconnected)
         {
-            DBGVLN("HW CRC error");
+            static uint8_t hwCrcErrPrints;
+            if (hwCrcErrPrints < 5)
+            {
+                ++hwCrcErrPrints;
+                DBGLN("HW CRC error rate=%u iq=%u",
+                      ExpressLRS_currAirRate_Modparams->index,
+                      (unsigned)Radio.IQinverted);
+            }
         }
         #if defined(DEBUG_RX_SCOREBOARD)
             lastPacketCrcError = true;
@@ -1121,10 +1139,19 @@ bool ICACHE_RAM_ATTR ProcessRFPacket(SX12xxDriverCommon::rx_status const status)
     OTA_Packet_s * const otaPktPtr = (OTA_Packet_s * const)Radio.RXdataBuffer;
     if (!OtaTryValidatePacketCrc(otaPktPtr, InBindingMode))
     {
-        // Wrong air rate/CRC init from a non-binding TX shows up as CRC errors here
-        if (!InBindingMode)
+        // Occasional soft-CRC fails are normal once linked (noise / false detects).
+        // Only log while not yet fully connected — avoids alarming spam after got conn.
+        if (!InBindingMode && connectionState != connected)
         {
-            DBGVLN("CRC error");
+            static uint8_t crcErrPrints;
+            if (crcErrPrints < 5)
+            {
+                ++crcErrPrints;
+                DBGLN("CRC error type=%u rate=%u crcInit=%x",
+                      otaPktPtr->std.type,
+                      ExpressLRS_currAirRate_Modparams->index,
+                      OtaCrcInitializer);
+            }
         }
         #if defined(DEBUG_RX_SCOREBOARD)
             lastPacketCrcError = true;
@@ -1692,6 +1719,14 @@ static void setupRadio()
     Radio.TXdoneCallback = &TXdoneISR;
 
     scanIndex = config.GetRateInitialIdx();
+#if defined(ELRS_CN_SINGLE_BAND)
+    // Index 0 is GFSK; TX defaults to LoRa 250Hz (index 1). Never boot-dwell on FSK
+    // or power-cycle reconnect will miss the TX until a slow rate cycle completes.
+    if (scanIndex == 0)
+    {
+        scanIndex = 1;
+    }
+#endif
     for (int i=0 ; i<RATE_MAX ; i++)
     {
         if (isSupportedRFRate(scanIndex))
@@ -1703,7 +1738,12 @@ static void setupRadio()
     SetRFLinkRate(scanIndex, false);
     // Start slow on the selected rate to give it the best chance
     // to connect before beginning rate cycling
+#if defined(ELRS_CN_SINGLE_BAND)
+    RFmodeCycleMultiplier = RFmodeCycleMultiplierSlow; // ~14s dwell at 250Hz / 80ch
+#else
     RFmodeCycleMultiplier = RFmodeCycleMultiplierSlow / 2;
+#endif
+    DBGLN("Listening rate=%u (boot)", ExpressLRS_currAirRate_Modparams->index);
 }
 
 static void updateTelemetryBurst()
@@ -1743,7 +1783,12 @@ static void cycleRfMode(unsigned long now)
 
         // Skip unsupported modes for hardware with only a single LR1121 or with a single RF path
         uint8_t skipCount = 0;
-        while (!isSupportedRFRate(scanIndex % RATE_MAX) && skipCount < RATE_MAX)
+        while ((!isSupportedRFRate(scanIndex % RATE_MAX)
+#if defined(ELRS_CN_SINGLE_BAND)
+                // Skip GFSK (index 0): default TX link is LoRa; dwelling here wastes the reconnect window
+                || (scanIndex % RATE_MAX) == 0
+#endif
+               ) && skipCount < RATE_MAX)
         {
             DBGLN("Skip %u", get_elrs_airRateConfig(scanIndex % RATE_MAX)->interval);
             scanIndex++;
@@ -1815,16 +1860,26 @@ static void ExitBindingMode()
     webserverPreventAutoStart = true;
     #endif
 
-    // Force RF cycling to start at the beginning immediately
+    // Force RF reception to resume immediately after bind.
+    // Clear InBindingMode first so LostConnection() reconfigures the radio —
+    // during bind hwTimer is not running, so the tock wait is safe.
+#if defined(ELRS_CN_SINGLE_BAND)
+    // Stay on bind rate (50Hz) to match TX post-bind; IQ forced true in SetRFLinkRate.
+    scanIndex = enumRatetoIndex(RATE_BINDING);
+    ExpressLRS_nextAirRateIndex = scanIndex;
+    RFmodeCycleMultiplier = RFmodeCycleMultiplierSlow;
+#else
     scanIndex = RATE_MAX;
-    RFmodeLastCycled = 0;
+    RFmodeCycleMultiplier = 1;
+#endif
     LockRFmode = false;
-    LostConnection(false);
-
-    // Do this last as LostConnection() will wait for a tock that never comes
-    // if we're in binding mode
     InBindingMode = false;
-    DBGLN("Exiting binding mode");
+    LostConnection(true);
+    // Start dwell timer now so we don't immediately leave the post-bind rate
+    RFmodeLastCycled = millis();
+    DBGLN("Exiting binding mode, listening rate=%u freq=%u crcInit=%x iq=%u UID5=%u",
+          ExpressLRS_currAirRate_Modparams->index, Radio.currFreq,
+          OtaCrcInitializer, (unsigned)Radio.IQinverted, UID[5]);
     devicesTriggerEvent();
 }
 
@@ -2036,6 +2091,13 @@ static void CheckConfigChangePending()
 {
     if (config.IsModified() && !InBindingMode && connectionState < NO_CONFIG_SAVE_STATES)
     {
+        // While tentative, only persist EEPROM — do NOT LostConnection()/RXnb()
+        // or the lock is aborted (common failure on CN 80-ch after power-cycle).
+        if (connectionState == tentative)
+        {
+            config.Commit();
+            return;
+        }
         LostConnection(false);
         config.Commit();
         devicesTriggerEvent();

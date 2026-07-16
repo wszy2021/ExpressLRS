@@ -135,11 +135,16 @@ transitioning from FS mode and the other from Standby mode. This causes the tx d
     }
 #endif
 
-    // 2.1.3.1 CalibImage
-    uint8_t CalImagebuf[2];
-    CalImagebuf[0] = ((minimumFrequency / 1000000 ) - 1) / 4;       // Freq1 = floor( (fmin_mhz - 1)/4)
-    CalImagebuf[1] = 1 + ((maximumFrequency / 1000000 ) + 1) / 4;   // Freq2 = ceil( (fmax_mhz + 1)/4)
-    hal.WriteCommand(LR11XX_SYSTEM_CALIBRATE_IMAGE_OC, CalImagebuf, sizeof(CalImagebuf), SX12XX_Radio_All);
+    // 2.1.3.1 CalibImage — only valid for the sub-GHz LF path (datasheet).
+    // Formula Freq=floor((f_mhz-1)/4) overflows uint8 above ~1024 MHz; S-band/2.4G use RFIO_HF
+    // and must not run LF image calibration with wrapped values (can disturb RF behaviour).
+    if (maximumFrequency < 1000000000)
+    {
+        uint8_t CalImagebuf[2];
+        CalImagebuf[0] = ((minimumFrequency / 1000000 ) - 1) / 4;       // Freq1 = floor( (fmin_mhz - 1)/4)
+        CalImagebuf[1] = 1 + ((maximumFrequency / 1000000 ) + 1) / 4;   // Freq2 = ceil( (fmax_mhz + 1)/4)
+        hal.WriteCommand(LR11XX_SYSTEM_CALIBRATE_IMAGE_OC, CalImagebuf, sizeof(CalImagebuf), SX12XX_Radio_All);
+    }
 
     return true;
 }
@@ -192,8 +197,9 @@ void LR1121Driver::Config(uint8_t bw, uint8_t sf, uint8_t cr, uint32_t regfreq,
         uint32_t fdev = (uint32_t)cr * 1000;
         ConfigModParamsFSK(bitrate, bwf, fdev, radioNumber);
 
-        // Increase packet length for FEC used only on 1000Hz 2.5GHz.
-        if (!isSubGHz)
+        // FEC is only for ISM 2.4GHz 1000Hz FSK — not CN S-band (1.5/1.9/2.1/2.6G)
+        // which is also !isSubGHz by the 1GHz threshold.
+        if (regfreq >= 2400000000UL && regfreq < 2500000000UL)
         {
             useFEC = true;
             PayloadLength = 14;
