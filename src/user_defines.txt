@@ -27,9 +27,9 @@
 #-DRegulatory_Domain_FCC_915
 #-DRegulatory_Domain_ISM_2400
 #-DRegulatory_Domain_EU_CE_2400
-#-DRegulatory_Domain_CN_315
+-DRegulatory_Domain_CN_315
 #-DRegulatory_Domain_CN_1500
--DRegulatory_Domain_CN_1900
+#-DRegulatory_Domain_CN_1900
 #-DRegulatory_Domain_CN_532
 #-DRegulatory_Domain_CN_2100
 #-DRegulatory_Domain_CN_2600

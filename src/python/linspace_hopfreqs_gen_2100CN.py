@@ -1,7 +1,7 @@
 import numpy as np
 
-start = 2050000000
-stop = 2150000000
+start = 2000000000
+stop = 2100000000
 bandwidth = 500000
 numfreqs = 80
 stopband = bandwidth * 0.2
