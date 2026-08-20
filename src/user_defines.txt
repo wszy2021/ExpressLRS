@@ -27,15 +27,15 @@
 #-DRegulatory_Domain_FCC_915
 #-DRegulatory_Domain_ISM_2400
 #-DRegulatory_Domain_EU_CE_2400
--DRegulatory_Domain_CN_315
+#-DRegulatory_Domain_CN_315
 #-DRegulatory_Domain_CN_1500
 #-DRegulatory_Domain_CN_1900
 #-DRegulatory_Domain_CN_532
 #-DRegulatory_Domain_CN_2100
-#-DRegulatory_Domain_CN_2600
+-DRegulatory_Domain_CN_2600
 
 #-DGPIO10L_OUTPUT_HIGH=1
-#-DGPIO18H_OUTPUT_HIGH=1
+-DGPIO18H_OUTPUT_HIGH=1
 #-DTX_LED_ON_VALUE=1
 
 ### PERFORMANCE OPTIONS: ###
@@ -107,7 +107,7 @@
 #-DDEBUG_RX_SCOREBOARD
 
 # Don't send RC msgs over UART
--DDEBUG_CRSF_NO_OUTPUT
+#-DDEBUG_CRSF_NO_OUTPUT
 
 # These debugging options send extra information to BetaFlight in the LinkStatistics packet
 #-DDEBUG_BF_LINK_STATS
