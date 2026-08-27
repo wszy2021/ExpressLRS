@@ -1276,7 +1276,7 @@ void MspReceiveComplete()
 #if !defined(PLATFORM_STM32)
     case MSP_ELRS_MAVLINK_TLM: // 0xFD
         // raw mavlink data
-        if (config.GetSerialProtocol() == PROTOCOL_MAVLINK)
+        if (config.GetSerialProtocol() == PROTOCOL_MAVLINK && serialIO != nullptr)
         {
             ((SerialMavlink *)serialIO)->forwardMessage(MspData);
         }
@@ -2335,7 +2335,7 @@ void loop()
     }
 
 #if !defined(PLATFORM_STM32)
-    if (config.GetSerialProtocol() == PROTOCOL_MAVLINK && !TelemetrySender.IsActive() && ((SerialMavlink *)serialIO)->GetNextPayload(&nextPlayloadSize, currentTelemetryPayload))
+    if (config.GetSerialProtocol() == PROTOCOL_MAVLINK && serialIO != nullptr && !TelemetrySender.IsActive() && ((SerialMavlink *)serialIO)->GetNextPayload(&nextPlayloadSize, currentTelemetryPayload))
     {
         TelemetrySender.SetDataToTransmit(currentTelemetryPayload, nextPlayloadSize);
     }

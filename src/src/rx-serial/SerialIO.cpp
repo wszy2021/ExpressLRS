@@ -8,7 +8,13 @@ void SerialIO::setFailsafe(bool failsafe)
 void SerialIO::processSerialInput()
 {
     auto maxBytes = getMaxSerialReadSize();
-    uint8_t buffer[maxBytes];
+    // Bound the stack allocation. ESP32-C3 (RISC-V) loopTask stack is small;
+    // MAVLink used to request up to 1024 bytes here and immediately crashed.
+    uint8_t buffer[64];
+    if (maxBytes > (int)sizeof(buffer))
+    {
+        maxBytes = sizeof(buffer);
+    }
     auto size = min(_inputPort->available(), maxBytes);
     _inputPort->readBytes(buffer, size);
     processBytes(buffer, size);

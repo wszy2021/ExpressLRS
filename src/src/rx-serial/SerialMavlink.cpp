@@ -6,12 +6,18 @@
 #include "CRSF.h"
 #include "config.h"
 
+#include <algorithm>
+
 #define MAVLINK_RC_PACKET_INTERVAL 10
 
 #define MAVLINK_COMM_NUM_BUFFERS 1
+// ESP32-C3 is RISC-V and will Load-access-fault on unaligned packed-struct copies.
+#if defined(PLATFORM_ESP32_C3)
+#define MAVLINK_ALIGNED_FIELDS 0
+#endif
 #include "common/mavlink.h"
 
-#define MAV_FTP_OPCODE_OPENFILERO 4
+#define MAV_SERIAL_CHUNK 64
 
 SerialMavlink::SerialMavlink(Stream &out, Stream &in):
     SerialIO(&out, &in),
@@ -31,7 +37,7 @@ SerialMavlink::SerialMavlink(Stream &out, Stream &in):
 uint32_t SerialMavlink::sendRCFrame(bool frameAvailable, bool frameMissed, uint32_t *channelData)
 {
     if (!frameAvailable) {
-        return DURATION_IMMEDIATELY;
+        return MAVLINK_RC_PACKET_INTERVAL;
     }
 
     const mavlink_rc_channels_override_t rc_override {
@@ -55,8 +61,9 @@ uint32_t SerialMavlink::sendRCFrame(bool frameAvailable, bool frameMissed, uint3
         chan16_raw: CRSF_to_US(channelData[15]),
     };
 
+    // Static to keep large mavlink_message_t off the C3 loop stack.
+    static mavlink_message_t msg;
     uint8_t buf[MAVLINK_MSG_ID_RC_CHANNELS_OVERRIDE_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES];
-    mavlink_message_t msg;
     mavlink_msg_rc_channels_override_encode(this_system_id, this_component_id, &msg, &rc_override);
     uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
     _outputPort->write(buf, len);
@@ -66,7 +73,12 @@ uint32_t SerialMavlink::sendRCFrame(bool frameAvailable, bool frameMissed, uint3
 
 int SerialMavlink::getMaxSerialReadSize()
 {
-    return MAV_INPUT_BUF_LEN - mavlinkInputBuffer.size();
+    const int space = (int)MAV_INPUT_BUF_LEN - (int)mavlinkInputBuffer.size();
+    if (space <= 0)
+    {
+        return 0;
+    }
+    return std::min(space, MAV_SERIAL_CHUNK);
 }
 
 void SerialMavlink::processBytes(uint8_t *bytes, u_int16_t size)
@@ -79,6 +91,7 @@ void SerialMavlink::processBytes(uint8_t *bytes, u_int16_t size)
 
 void SerialMavlink::sendQueuedData(uint32_t maxBytesToSend)
 {
+    (void)maxBytesToSend;
 
     // Send radio messages at 100Hz
     const uint32_t now = millis();
@@ -100,41 +113,37 @@ void SerialMavlink::sendQueuedData(uint32_t maxBytesToSend)
             remnoise: 0,
         };
 
+        static mavlink_message_t statusMsg;
         uint8_t buf[MAVLINK_MSG_ID_RADIO_STATUS_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES];
-        mavlink_message_t msg;
-        mavlink_msg_radio_status_encode(this_system_id, this_component_id, &msg, &radio_status);
-        uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+        mavlink_msg_radio_status_encode(this_system_id, this_component_id, &statusMsg, &radio_status);
+        uint16_t len = mavlink_msg_to_send_buffer(buf, &statusMsg);
         _outputPort->write(buf, len);
     }
 
-    auto size = mavlinkOutputBuffer.size();
+    uint16_t size = mavlinkOutputBuffer.size();
     if (size == 0)
     {
-        // nothing to send
         return;
     }
+    if (size > MAV_SERIAL_CHUNK)
+    {
+        size = MAV_SERIAL_CHUNK;
+    }
 
-    uint8_t apBuf[size];
+    uint8_t apBuf[MAV_SERIAL_CHUNK];
     mavlinkOutputBuffer.lock();
     mavlinkOutputBuffer.popBytes(apBuf, size);
     mavlinkOutputBuffer.unlock();
 
-    for (uint8_t i = 0; i < size; ++i)
+    static mavlink_message_t parseMsg;
+    static uint8_t outBuf[MAVLINK_MAX_PACKET_LEN];
+    mavlink_status_t status;
+    for (uint16_t i = 0; i < size; ++i)
     {
-        uint8_t c = apBuf[i];
-
-        mavlink_message_t msg;
-        mavlink_status_t status;
-
-        // Try parse a mavlink message
-        if (mavlink_frame_char(MAVLINK_COMM_0, c, &msg, &status))
+        if (mavlink_frame_char(MAVLINK_COMM_0, apBuf[i], &parseMsg, &status))
         {
-            // Message decoded successfully
-
-            // Forward message to the UART
-            uint8_t buf[MAVLINK_MAX_PACKET_LEN];
-            uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-            _outputPort->write(buf, len);
+            uint16_t len = mavlink_msg_to_send_buffer(outBuf, &parseMsg);
+            _outputPort->write(outBuf, len);
         }
     }
 }

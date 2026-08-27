@@ -92,7 +92,7 @@
 ### Debugging options ###
 
 # Turn on debug messages, if disabled then all debugging options (starting with DEBUG_) are disabled
--DDEBUG_LOG
+#-DDEBUG_LOG
 #-DRCVR_UART_BAUD=115200
 
 # For an ESP32S3 MCU, there are two options:

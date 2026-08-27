@@ -1,6 +1,10 @@
 #include "CRSF.h"
 #if !defined(PLATFORM_STM32)
 #define MAVLINK_COMM_NUM_BUFFERS 1
+// RISC-V (ESP32-C3) faults on unaligned packed-struct loads used by mavlink helpers.
+#if defined(PLATFORM_ESP32_C3)
+#define MAVLINK_ALIGNED_FIELDS 0
+#endif
 #include "common/mavlink.h"
 #endif
 #include <CRSFHandset.h>

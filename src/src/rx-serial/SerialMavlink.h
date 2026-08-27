@@ -1,12 +1,14 @@
 #include "FIFO.h"
 #include "SerialIO.h"
 
+// Keep FIFOs modest on ESP32-C3 (less SRAM than ESP32/S3).
+#if defined(PLATFORM_ESP32_C3)
+#define MAV_INPUT_BUF_LEN   512
+#define MAV_OUTPUT_BUF_LEN  256
+#else
 #define MAV_INPUT_BUF_LEN   1024
 #define MAV_OUTPUT_BUF_LEN  512
-
-// Variables / constants
-extern FIFO<MAV_INPUT_BUF_LEN> mavlinkInputBuffer;
-extern FIFO<MAV_OUTPUT_BUF_LEN> mavlinkOutputBuffer;
+#endif
 
 class SerialMavlink : public SerialIO {
 public:
