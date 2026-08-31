@@ -46,6 +46,7 @@
 #elif defined(PLATFORM_ESP32)
 #include <SPIFFS.h>
 #include "esp_task_wdt.h"
+#include "esp_system.h"
 #endif
 
 //
@@ -70,6 +71,7 @@
 
 //// CONSTANTS ////
 #define SEND_LINK_STATS_TO_FC_INTERVAL 100
+#define SEND_UID_TO_FC_INTERVAL 30
 #define DIVERSITY_ANTENNA_INTERVAL 5
 #define DIVERSITY_ANTENNA_RSSI_TRIGGER 5
 #define PACKET_TO_TOCK_SLACK 200 // Desired buffer time between Packet ISR and Tock ISR
@@ -178,6 +180,8 @@ StubbornReceiver MspReceiver;
 uint8_t MspData[ELRS_MSP_BUFFER];
 
 static bool tlmSent = false;
+static bool uidReportToFcActive = true;
+static uint32_t lastUidReportToFcMs;
 static uint8_t NextTelemetryType = ELRS_TELEMETRY_TYPE_LINK;
 static bool telemBurstValid;
 /// PFD Filters ////////////////
@@ -1678,18 +1682,43 @@ static void setupTarget()
     setupTargetCommon();
 }
 
+static void generateRandomUid(uint8_t *uid)
+{
+#if defined(PLATFORM_ESP32)
+    const uint32_t r0 = esp_random();
+    const uint32_t r1 = esp_random();
+#elif defined(PLATFORM_ESP8266)
+    const uint32_t r0 = RANDOM_REG32;
+    const uint32_t r1 = RANDOM_REG32;
+#else
+    const uint32_t r0 = (uint32_t)random() ^ millis();
+    const uint32_t r1 = (uint32_t)random() ^ micros();
+#endif
+    uid[0] = (uint8_t)r0;
+    uid[1] = (uint8_t)(r0 >> 8);
+    uid[2] = (uint8_t)(r0 >> 16);
+    uid[3] = (uint8_t)(r0 >> 24);
+    uid[4] = (uint8_t)r1;
+    uid[5] = (uint8_t)(r1 >> 8);
+    if (!UID_IS_BOUND(uid))
+    {
+        uid[5] = 1;
+    }
+}
+
 static void setupBindingFromConfig()
 {
-    // VolatileBind's only function is to prevent loading the stored UID into RAM
-    // which makes the RX boot into bind mode every time
-    if (config.GetIsBound())
+    // Keep a persisted UID across reboots. Generate one only when EEPROM is empty.
+    if (UID_IS_BOUND(config.GetUID()))
     {
         memcpy(UID, config.GetUID(), UID_LEN);
     }
-    else if (firmwareOptions.hasUID)
+    else
     {
-        // Use the compiled binding phrase until MSP bind writes EEPROM
-        memcpy(UID, firmwareOptions.uid, UID_LEN);
+        generateRandomUid(UID);
+        config.SetUID(UID);
+        config.Commit();
+        DBGLN("Generated random UID");
     }
 
     DBGLN("UID=(%d, %d, %d, %d, %d, %d) ModelId=%u",
@@ -1988,6 +2017,52 @@ void EnterBindingModeSafely()
     EnterBindingMode();
 }
 
+static void stopUidReportToFc()
+{
+    if (uidReportToFcActive)
+    {
+        uidReportToFcActive = false;
+        DBGLN("Stop UID report to FC");
+    }
+}
+
+static void checkSendUidToFc(uint32_t now)
+{
+    if (telemetry.ShouldAckUidReport())
+    {
+        stopUidReportToFc();
+    }
+    if (connectionState == connected)
+    {
+        stopUidReportToFc();
+    }
+    if (!uidReportToFcActive || serialIO == nullptr || connectionState >= wifiUpdate)
+    {
+        return;
+    }
+    if (config.GetSerialProtocol() != PROTOCOL_CRSF &&
+        config.GetSerialProtocol() != PROTOCOL_INVERTED_CRSF)
+    {
+        return;
+    }
+    if (now - lastUidReportToFcMs < SEND_UID_TO_FC_INTERVAL)
+    {
+        return;
+    }
+    lastUidReportToFcMs = now;
+
+    constexpr uint8_t uidPayloadLen = 2 + UID_LEN; // subcmd + uid
+    uint8_t frame[CRSF_EXT_FRAME_SIZE(uidPayloadLen) + CRSF_FRAME_NOT_COUNTED_BYTES];
+    frame[5] = CRSF_COMMAND_SUBCMD_RX;
+    frame[6] = CRSF_COMMAND_SUBCMD_RX_UID;
+    memcpy(&frame[7], UID, UID_LEN);
+    CRSF::SetExtendedHeaderAndCrc(frame, CRSF_FRAMETYPE_COMMAND,
+        CRSF_EXT_FRAME_SIZE(uidPayloadLen),
+        CRSF_ADDRESS_CRSF_RECEIVER, CRSF_ADDRESS_FLIGHT_CONTROLLER);
+    serialIO->queueMSPFrameTransmission(frame);
+    serialIO->sendQueuedData(serialIO->getMaxSerialWriteSize());
+}
+
 static void checkSendLinkStatsToFc(uint32_t now)
 {
     if (now - SendLinkStatstoFCintervalLastSent > SEND_LINK_STATS_TO_FC_INTERVAL)
@@ -2164,6 +2239,9 @@ void setup()
     #else
     hardwareConfigured = options_init();
     #endif
+#if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
+    firmwareOptions.wifi_auto_on_interval = -1;
+#endif
     #ifdef GPIO10L_OUTPUT_HIGH
         pinMode(10, OUTPUT);
         digitalWrite(10, HIGH);
@@ -2268,6 +2346,7 @@ void loop()
 
     // read and process any data from serial ports, send any queued non-RC data
     handleSerialIO();
+    checkSendUidToFc(now);
 
 #if defined(PLATFORM_ESP8266) || defined(PLATFORM_ESP32)
     // If the reboot time is set and the current time is past the reboot time then reboot.

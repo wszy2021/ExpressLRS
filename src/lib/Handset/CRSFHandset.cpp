@@ -372,6 +372,30 @@ bool CRSFHandset::ProcessPacket()
 
     const uint8_t packetType = inBuffer.asRCPacket_t.header.type;
     uint8_t *SerialInBuffer = inBuffer.asUint8_t;
+    const crsf_ext_header_t *extHeader = (crsf_ext_header_t *)SerialInBuffer;
+
+    // RX/FC UID report: COMMAND 0x10 0x09 + 6-byte UID. Apply and ACK, do not forward OTA.
+    if (packetType == CRSF_FRAMETYPE_COMMAND
+        && extHeader->frame_size >= 12
+        && extHeader->payload[0] == CRSF_COMMAND_SUBCMD_RX
+        && extHeader->payload[1] == CRSF_COMMAND_SUBCMD_RX_UID)
+    {
+        const uint8_t *uid = &extHeader->payload[2];
+        if (OnUidCommand)
+        {
+            OnUidCommand(uid);
+        }
+
+        uint8_t ack[CRSF_EXT_FRAME_SIZE(2 + UID_LEN) + CRSF_FRAME_NOT_COUNTED_BYTES];
+        ack[5] = CRSF_COMMAND_SUBCMD_RX;
+        ack[6] = CRSF_COMMAND_SUBCMD_RX_UID;
+        memcpy(&ack[7], uid, UID_LEN);
+        CRSF::SetExtendedHeaderAndCrc(ack, CRSF_FRAMETYPE_COMMAND,
+            CRSF_EXT_FRAME_SIZE(2 + UID_LEN),
+            CRSF_ADDRESS_CRSF_TRANSMITTER, CRSF_ADDRESS_FLIGHT_CONTROLLER);
+        sendTelemetryToTX(ack);
+        return true;
+    }
 
     if (packetType == CRSF_FRAMETYPE_RC_CHANNELS_PACKED)
     {

@@ -1181,6 +1181,49 @@ void EnterBindingModeSafely()
   EnterBindingMode();
 }
 
+void OnSerialUidReceived(const uint8_t *newUid)
+{
+  if (!UID_IS_BOUND(newUid))
+  {
+    return;
+  }
+  if (memcmp(UID, newUid, UID_LEN) == 0)
+  {
+    return;
+  }
+
+  memcpy(UID, newUid, UID_LEN);
+  firmwareOptions.hasUID = true;
+  memcpy(firmwareOptions.uid, newUid, UID_LEN);
+#if defined(TARGET_UNIFIED_TX)
+  saveOptions();
+#endif
+
+  DBGLN("Serial UID=(%d, %d, %d, %d, %d, %d)",
+    UID[0], UID[1], UID[2], UID[3], UID[4], UID[5]);
+
+  if (InBindingMode)
+  {
+    ExitBindingMode();
+    return;
+  }
+
+  hwTimer::stop();
+  while (busyTransmitting);
+
+  OtaUpdateCrcInitFromUid();
+  FHSSrandomiseFHSSsequence(uidMacSeedGet());
+  ExpressLRS_currAirRate_Modparams = nullptr;
+  auto index = adjustPacketRateForBaud(config.GetRate());
+  SetRFLinkRate(index);
+  connectionState = disconnected;
+  LastTLMpacketRecvMillis = 0;
+  rfModeLastChangedMS = millis();
+  syncSpamCounter = syncSpamAmount;
+  syncSpamCounterAfterRateChange = syncSpamAmountAfterRateChange;
+  hwTimer::resume();
+}
+
 void ProcessMSPPacket(uint32_t now, mspPacket_t *packet)
 {
 #if !defined(CRITICAL_FLASH)
@@ -1487,24 +1530,11 @@ bool setupHardwareFromOptions()
 
 static void setupBindingFromConfig()
 {
+  // Prefer a UID previously received over serial (saved in options).
+  // Do not fall back to MAC — this TX syncs to the RX-generated UID.
   if (firmwareOptions.hasUID)
   {
       memcpy(UID, firmwareOptions.uid, UID_LEN);
-  }
-  else
-  {
-#ifdef PLATFORM_ESP32
-    esp_read_mac(UID, ESP_MAC_WIFI_STA);
-#elif PLATFORM_ESP8266
-    wifi_get_macaddr(STATION_IF, UID);
-#elif PLATFORM_STM32
-    UID[0] = (uint8_t)HAL_GetUIDw0();
-    UID[1] = (uint8_t)(HAL_GetUIDw0() >> 8);
-    UID[2] = (uint8_t)HAL_GetUIDw1();
-    UID[3] = (uint8_t)(HAL_GetUIDw1() >> 8);
-    UID[4] = (uint8_t)HAL_GetUIDw2();
-    UID[5] = (uint8_t)(HAL_GetUIDw2() >> 8);
-#endif
   }
 
   DBGLN("UID=(%d, %d, %d, %d, %d, %d)",
@@ -1549,6 +1579,7 @@ void setup()
     Radio.TXdoneCallback = &TXdoneISR;
 
     handset->registerCallbacks(UARTconnected, firmwareOptions.is_airport ? nullptr : UARTdisconnected, ModelUpdateReq, EnterBindingModeSafely);
+    handset->registerUidCallback(OnSerialUidReceived);
 
     DBGLN("ExpressLRS TX Module Booted...");
 

@@ -117,6 +117,13 @@ bool Telemetry::ShouldSendDeviceFrame()
     return deviceFrame;
 }
 
+bool Telemetry::ShouldAckUidReport()
+{
+    bool ack = callUidReportAck;
+    callUidReportAck = false;
+    return ack;
+}
+
 void Telemetry::SetCrsfBatterySensorDetected()
 {
     crsfBatterySensorDetected = true;
@@ -239,6 +246,14 @@ bool Telemetry::processInternalTelemetryPackage(uint8_t *package)
             && header->payload[1] == CRSF_COMMAND_SUBCMD_RX_BIND))
         {
             callEnterBind = true;
+            return true;
+        }
+        // FC ACK for RX UID report (same COMMAND/subcmd, dest may be RX or an echo)
+        if (header->frame_size >= 6
+            && header->payload[0] == CRSF_COMMAND_SUBCMD_RX
+            && header->payload[1] == CRSF_COMMAND_SUBCMD_RX_UID)
+        {
+            callUidReportAck = true;
             return true;
         }
         // Non CRSF, dest=b src=m -> set modelmatch
