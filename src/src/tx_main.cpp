@@ -26,9 +26,13 @@
 
 #include "MAVLink.h"
 
-#if defined(PLATFORM_ESP32_S3) || defined(PLATFORM_ESP32_C3)
+#if defined(PLATFORM_ESP32_C3)
 #include "USB.h"
+#if ARDUINO_USB_CDC_ON_BOOT
 #define USBSerial Serial
+#endif
+#elif defined(PLATFORM_ESP32_S3)
+#include "driver/gpio.h"
 #elif defined(PLATFORM_ESP8266)
 #include <user_interface.h>
 #endif
@@ -1243,6 +1247,28 @@ void ParseMSPData(uint8_t *buf, uint8_t size)
   }
 }
 
+static constexpr uint16_t UART_IO_CHUNK = 64;
+
+// uart_write_bytes() blocks when the TX ring is full. After the RX links,
+// MAVLink telemetry can fill that ring and the loop task watchdog resets the S3.
+static void writeTxUSB(const uint8_t *data, size_t len)
+{
+  if (data == nullptr || len == 0)
+  {
+    return;
+  }
+  int space = TxUSB->availableForWrite();
+  if (space > 0 && (size_t)space < len)
+  {
+    len = (size_t)space;
+  }
+  else if (space == 0)
+  {
+    return;
+  }
+  TxUSB->write(data, len);
+}
+
 static void HandleUARTout()
 {
   if (firmwareOptions.is_airport)
@@ -1250,11 +1276,15 @@ static void HandleUARTout()
     auto size = apOutputBuffer.size();
     if (size)
     {
-      uint8_t buf[size];
+      if (size > UART_IO_CHUNK)
+      {
+        size = UART_IO_CHUNK;
+      }
+      uint8_t buf[UART_IO_CHUNK];
       apOutputBuffer.lock();
       apOutputBuffer.popBytes(buf, size);
       apOutputBuffer.unlock();
-      TxUSB->write(buf, size);
+      writeTxUSB(buf, size);
     }
   }
 }
@@ -1267,9 +1297,13 @@ static void HandleUARTin()
     if (firmwareOptions.is_airport)
     {
       auto size = std::min(apInputBuffer.free(), (uint16_t)TxUSB->available());
+      if (size > UART_IO_CHUNK)
+      {
+        size = UART_IO_CHUNK;
+      }
       if (size > 0)
       {
-        uint8_t buf[size];
+        uint8_t buf[UART_IO_CHUNK];
         TxUSB->readBytes(buf, size);
         apInputBuffer.lock();
         apInputBuffer.pushBytes(buf, size);
@@ -1279,9 +1313,13 @@ static void HandleUARTin()
     else
     {
       auto size = std::min(uartInputBuffer.free(), (uint16_t)TxUSB->available());
+      if (size > UART_IO_CHUNK)
+      {
+        size = UART_IO_CHUNK;
+      }
       if (size > 0)
       {
-        uint8_t buf[size];
+        uint8_t buf[UART_IO_CHUNK];
         TxUSB->readBytes(buf, size);
         uartInputBuffer.lock();
         uartInputBuffer.pushBytes(buf, size);
@@ -1305,9 +1343,13 @@ static void HandleUARTin()
   if (TxBackpack->available())
   {
     auto size = std::min(uartInputBuffer.free(), (uint16_t)TxBackpack->available());
+    if (size > UART_IO_CHUNK)
+    {
+      size = UART_IO_CHUNK;
+    }
     if (size > 0)
     {
-      uint8_t buf[size];
+      uint8_t buf[UART_IO_CHUNK];
       TxBackpack->readBytes(buf, size);
 
       // If the TX is in Mavlink mode, push the bytes into the fifo buffer
@@ -1339,6 +1381,13 @@ static void setupSerial()
    * Setup the logging/backpack serial port, and the USB serial port.
    * This is always done because we need a place to send data even if there is no backpack!
    */
+
+#if defined(PLATFORM_ESP32_S3)
+  // ROM console leaves UART0 on GPIO43/44 (USB-UART). CRSF also uses the UART0
+  // peripheral (remapped to the JR pins). Release 43/44 so UART1 can own them.
+  gpio_reset_pin((gpio_num_t)U0TXD_GPIO_NUM);
+  gpio_reset_pin((gpio_num_t)U0RXD_GPIO_NUM);
+#endif
 
 // Setup TxBackpack
 #if defined(PLATFORM_ESP32)
@@ -1390,14 +1439,37 @@ static void setupSerial()
 #endif
   TxBackpack = serialPort;
 
-#if defined(PLATFORM_ESP32_S3) || defined(PLATFORM_ESP32_C3)
-  Serial.begin(460800);
-#endif
-
 // Setup TxUSB
-#if defined(PLATFORM_ESP32_S3) || defined(PLATFORM_ESP32_C3)
-  USBSerial.begin(firmwareOptions.uart_baud);
+#if defined(PLATFORM_ESP32_C3)
+  // C3 modules use native USB CDC for MAVLink/GCS.
+  USBSerial.setTxBufferSize(1024);
+  USBSerial.setRxBufferSize(1024);
+  USBSerial.setTxTimeoutMs(2);
+  USBSerial.begin(firmwareOptions.uart_baud ? firmwareOptions.uart_baud : 460800);
   TxUSB = &USBSerial;
+#elif defined(PLATFORM_ESP32_S3)
+  // S3 TX USB is a USB-UART chip on UART0 default pins (GPIO44 RX / GPIO43 TX).
+  // UART0 itself is the CRSF handset, so drive those pins with UART1.
+  {
+    const uint32_t usbBaud = firmwareOptions.uart_baud ? firmwareOptions.uart_baud : 460800;
+    if (firmwareOptions.is_airport ||
+        (GPIO_PIN_DEBUG_RX == U0RXD_GPIO_NUM && GPIO_PIN_DEBUG_TX == U0TXD_GPIO_NUM))
+    {
+      TxUSB = TxBackpack;
+    }
+    else if (GPIO_PIN_RCSIGNAL_RX == U0RXD_GPIO_NUM && GPIO_PIN_RCSIGNAL_TX == U0TXD_GPIO_NUM)
+    {
+      TxUSB = new NullStream();
+    }
+    else
+    {
+      Serial1.setTxBufferSize(1024);
+      Serial1.setRxBufferSize(1024);
+      Serial1.begin(usbBaud, SERIAL_8N1, U0RXD_GPIO_NUM, U0TXD_GPIO_NUM, false, 0);
+      Serial1.setTimeout(0);
+      TxUSB = &Serial1;
+    }
+  }
 #elif defined(PLATFORM_ESP32)
   if (GPIO_PIN_DEBUG_RX == U0RXD_GPIO_NUM && GPIO_PIN_DEBUG_TX == U0TXD_GPIO_NUM)
   {
@@ -1689,7 +1761,7 @@ void loop()
           uint8_t count = CRSFinBuffer[1];
           // Convert to CRSF telemetry where we can
           convert_mavlink_to_crsf_telem(CRSFinBuffer, count, handset);
-          TxUSB->write(CRSFinBuffer + CRSF_FRAME_NOT_COUNTED_BYTES, count);
+          writeTxUSB(CRSFinBuffer + CRSF_FRAME_NOT_COUNTED_BYTES, count);
           // If we have a backpack
           if (TxUSB != TxBackpack)
           {
