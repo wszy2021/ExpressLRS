@@ -7,6 +7,8 @@
 #if defined(CRSF_TX_MODULE) && !defined(UNIT_TEST)
 #include "device.h"
 
+extern void ApplySerialUid(const uint8_t *uid);
+
 #if defined(PLATFORM_ESP32)
 #include <hal/uart_ll.h>
 #include <soc/soc.h>
@@ -329,6 +331,18 @@ bool CRSFHandset::processInternalCrsfPackage(uint8_t *package)
         && header->payload[1] == CRSF_COMMAND_SUBCMD_RX_BIND)
     {
         if (OnBindingCommand) OnBindingCommand();
+        return true;
+    }
+
+    // Radio sends UID for the TX to adopt: EE 0C 32 EE EA 10 0A [UID6] [CRC]
+    if (packetType == CRSF_FRAMETYPE_COMMAND
+        && header->frame_size >= 12
+        && header->dest_addr == CRSF_ADDRESS_CRSF_TRANSMITTER
+        && header->orig_addr == CRSF_ADDRESS_RADIO_TRANSMITTER
+        && header->payload[0] == CRSF_COMMAND_SUBCMD_RX
+        && header->payload[1] == CRSF_COMMAND_SUBCMD_RX_SET_UID)
+    {
+        ApplySerialUid(&header->payload[2]);
         return true;
     }
 

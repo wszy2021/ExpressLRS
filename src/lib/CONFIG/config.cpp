@@ -612,6 +612,29 @@ TxConfig::SetPTREnableChannel(uint8_t ptrEnableChannel)
     }
 }
 
+bool
+TxConfig::GetSerialUid(uint8_t *uid)
+{
+#if defined(PLATFORM_ESP32)
+    size_t size = UID_LEN;
+    return nvs_get_blob(handle, "serial_uid", uid, &size) == ESP_OK && size == UID_LEN;
+#else
+    (void)uid;
+    return false;
+#endif
+}
+
+void
+TxConfig::SetSerialUid(const uint8_t *uid)
+{
+#if defined(PLATFORM_ESP32)
+    nvs_set_blob(handle, "serial_uid", uid, UID_LEN);
+    nvs_commit(handle);
+#else
+    (void)uid;
+#endif
+}
+
 void
 TxConfig::SetDefaults(bool commit)
 {

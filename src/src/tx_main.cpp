@@ -1185,6 +1185,41 @@ void EnterBindingModeSafely()
   EnterBindingMode();
 }
 
+void ApplySerialUid(const uint8_t *newUid)
+{
+  if (memcmp(UID, newUid, UID_LEN) == 0)
+  {
+    return;
+  }
+
+  hwTimer::stop();
+  while (busyTransmitting);
+
+  memcpy(UID, newUid, UID_LEN);
+  config.SetSerialUid(UID);
+  OtaUpdateCrcInitFromUid();
+  FHSSrandomiseFHSSsequence(uidMacSeedGet());
+
+  if (InBindingMode)
+  {
+    MspSender.ResetState();
+    InBindingMode = false;
+  }
+
+  // Force radio reconfigure so LR1121 sync words and FHSS match the new UID
+  ExpressLRS_currAirRate_Modparams = nullptr;
+  auto index = adjustPacketRateForBaud(config.GetRate());
+  SetRFLinkRate(index);
+  ExpressLRS_currTlmDenom = TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval);
+  connectionState = disconnected;
+  syncSpamCounter = syncSpamAmount;
+  syncSpamCounterAfterRateChange = syncSpamAmountAfterRateChange;
+  hwTimer::resume();
+
+  DBGLN("Serial UID=(%d, %d, %d, %d, %d, %d) crcInit=%x",
+        UID[0], UID[1], UID[2], UID[3], UID[4], UID[5], OtaCrcInitializer);
+}
+
 void ProcessMSPPacket(uint32_t now, mspPacket_t *packet)
 {
 #if !defined(CRITICAL_FLASH)
@@ -1627,6 +1662,16 @@ void setup()
     eeprom.Begin(); // Init the eeprom
     config.SetStorageProvider(&eeprom); // Pass pointer to the Config class for access to storage
     config.Load(); // Load the stored values from eeprom
+
+    uint8_t serialUid[UID_LEN];
+    if (config.GetSerialUid(serialUid))
+    {
+      memcpy(UID, serialUid, UID_LEN);
+      OtaUpdateCrcInitFromUid();
+      FHSSrandomiseFHSSsequence(uidMacSeedGet());
+      DBGLN("UID from serial store=(%d, %d, %d, %d, %d, %d)",
+            UID[0], UID[1], UID[2], UID[3], UID[4], UID[5]);
+    }
 
     Radio.currFreq = FHSSgetInitialFreq(); //set frequency first or an error will occur!!!
     #if defined(RADIO_SX127X)

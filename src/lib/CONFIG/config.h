@@ -162,6 +162,8 @@ public:
     void SetBackpackTlmMode(uint8_t mode);
     void SetPTRStartChannel(uint8_t ptrStartChannel);
     void SetPTREnableChannel(uint8_t ptrEnableChannel);
+    bool GetSerialUid(uint8_t *uid);
+    void SetSerialUid(const uint8_t *uid);
 
     // State setters
     bool SetModelId(uint8_t modelId);
