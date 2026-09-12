@@ -1308,7 +1308,7 @@ static int timeout()
     setWifiUpdateMode();
     return DURATION_IMMEDIATELY;
   }
-  #elif defined(TARGET_RX)
+  #elif defined(TARGET_RX) && !defined(Regulatory_Domain_CN_1900)
   if (firmwareOptions.wifi_auto_on_interval != -1 && !webserverPreventAutoStart && (connectionState == disconnected))
   {
     static bool pastAutoInterval = false;

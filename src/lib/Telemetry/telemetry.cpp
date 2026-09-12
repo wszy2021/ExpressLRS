@@ -110,6 +110,13 @@ bool Telemetry::ShouldCallUpdateModelMatch()
     return updateModelMatch;
 }
 
+bool Telemetry::ShouldAckSerialUid()
+{
+    bool ack = callSerialUidAck;
+    callSerialUidAck = false;
+    return ack;
+}
+
 bool Telemetry::ShouldSendDeviceFrame()
 {
     bool deviceFrame = sendDeviceFrame;
@@ -239,6 +246,16 @@ bool Telemetry::processInternalTelemetryPackage(uint8_t *package)
             && header->payload[1] == CRSF_COMMAND_SUBCMD_RX_BIND))
         {
             callEnterBind = true;
+            return true;
+        }
+        // FC ack/set for RX-reported UID: dest=RX orig=FC 10 09/0A
+        if (header->frame_size >= 6
+            && header->orig_addr == CRSF_ADDRESS_FLIGHT_CONTROLLER
+            && header->payload[0] == CRSF_COMMAND_SUBCMD_RX
+            && (header->payload[1] == CRSF_COMMAND_SUBCMD_RX_REPORT_UID
+                || header->payload[1] == CRSF_COMMAND_SUBCMD_RX_SET_UID))
+        {
+            callSerialUidAck = true;
             return true;
         }
         // Non CRSF, dest=b src=m -> set modelmatch

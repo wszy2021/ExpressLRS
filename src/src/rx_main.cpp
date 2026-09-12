@@ -46,6 +46,7 @@
 #elif defined(PLATFORM_ESP32)
 #include <SPIFFS.h>
 #include "esp_task_wdt.h"
+#include "esp_system.h"
 #endif
 
 //
@@ -1678,6 +1679,69 @@ static void setupTarget()
     setupTargetCommon();
 }
 
+#if defined(Regulatory_Domain_CN_1900)
+static bool serialUidReportActive = true;
+static uint32_t lastSerialUidReportMs = 0;
+
+static void generateRandomUid(uint8_t *uid)
+{
+#if defined(PLATFORM_ESP32)
+    esp_fill_random(uid, UID_LEN);
+#elif defined(PLATFORM_ESP8266)
+    for (uint8_t i = 0; i < UID_LEN; i++)
+    {
+        uid[i] = (uint8_t)RANDOM_REG32;
+    }
+#else
+    for (uint8_t i = 0; i < UID_LEN; i++)
+    {
+        uid[i] = (uint8_t)random(256);
+    }
+#endif
+    if (!UID_IS_BOUND(uid))
+    {
+        uid[5] = 0xA5;
+    }
+}
+
+static void sendSerialUidReport()
+{
+    if (serialIO == nullptr)
+    {
+        return;
+    }
+
+    uint8_t frame[14] = {};
+    frame[5] = CRSF_COMMAND_SUBCMD_RX;
+    frame[6] = CRSF_COMMAND_SUBCMD_RX_REPORT_UID;
+    memcpy(&frame[7], UID, UID_LEN);
+    CRSF::SetExtendedHeaderAndCrc(frame, CRSF_FRAMETYPE_COMMAND, CRSF_EXT_FRAME_SIZE(2 + UID_LEN),
+                                  CRSF_ADDRESS_CRSF_RECEIVER, CRSF_ADDRESS_FLIGHT_CONTROLLER);
+    serialIO->queueMSPFrameTransmission(frame);
+}
+
+static void handleSerialUidReport(uint32_t now)
+{
+    if (!serialUidReportActive)
+    {
+        return;
+    }
+
+    if (connectionState == connected || telemetry.ShouldAckSerialUid())
+    {
+        serialUidReportActive = false;
+        DBGLN("Stop serial UID report (connected=%u)", connectionState == connected);
+        return;
+    }
+
+    if (now - lastSerialUidReportMs >= 30)
+    {
+        lastSerialUidReportMs = now;
+        sendSerialUidReport();
+    }
+}
+#endif
+
 static void setupBindingFromConfig()
 {
     // VolatileBind's only function is to prevent loading the stored UID into RAM
@@ -1686,11 +1750,21 @@ static void setupBindingFromConfig()
     {
         memcpy(UID, config.GetUID(), UID_LEN);
     }
+#if defined(Regulatory_Domain_CN_1900)
+    else
+    {
+        generateRandomUid(UID);
+        config.SetUID(UID);
+        config.Commit();
+        DBGLN("Generated random UID");
+    }
+#else
     else if (firmwareOptions.hasUID)
     {
         // Use the compiled binding phrase until MSP bind writes EEPROM
         memcpy(UID, firmwareOptions.uid, UID_LEN);
     }
+#endif
 
     DBGLN("UID=(%d, %d, %d, %d, %d, %d) ModelId=%u",
         UID[0], UID[1], UID[2], UID[3], UID[4], UID[5], config.GetModelId());
@@ -2268,6 +2342,9 @@ void loop()
 
     // read and process any data from serial ports, send any queued non-RC data
     handleSerialIO();
+#if defined(Regulatory_Domain_CN_1900)
+    handleSerialUidReport(now);
+#endif
 
 #if defined(PLATFORM_ESP8266) || defined(PLATFORM_ESP32)
     // If the reboot time is set and the current time is past the reboot time then reboot.

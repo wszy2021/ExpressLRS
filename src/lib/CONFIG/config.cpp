@@ -790,6 +790,10 @@ void RxConfig::Load()
 
 void RxConfig::CheckUpdateFlashedUid(bool skipDescrimCheck)
 {
+#if defined(Regulatory_Domain_CN_1900)
+    // 1.9G RX generates and persists its own UID; ignore flashed binding phrase
+    return;
+#endif
     // No binding phrase flashed, nothing to do
     if (!firmwareOptions.hasUID)
         return;
@@ -954,12 +958,14 @@ void RxConfig::UpgradeUid(uint8_t *onLoanUid, uint8_t *boundUid)
     {
         memcpy(m_config.uid, onLoanUid, UID_LEN);
     }
+#if !defined(Regulatory_Domain_CN_1900)
     // Compiled in UID? Bind to that
     else if (firmwareOptions.hasUID)
     {
         memcpy(m_config.uid, firmwareOptions.uid, UID_LEN);
         m_config.flash_discriminator = firmwareOptions.flash_discriminator;
     }
+#endif
     else if (boundUid)
     {
         // keep binding

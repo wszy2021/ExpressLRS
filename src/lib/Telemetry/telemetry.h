@@ -32,6 +32,7 @@ public:
     bool ShouldCallEnterBind();
     bool ShouldCallUpdateModelMatch();
     bool ShouldSendDeviceFrame();
+    bool ShouldAckSerialUid();
     void CheckCrsfBatterySensorDetected();
     void SetCrsfBatterySensorDetected();
     bool GetCrsfBatterySensorDetected() const { return crsfBatterySensorDetected; }
@@ -58,6 +59,7 @@ private:
     bool callEnterBind;
     bool callUpdateModelMatch;
     bool sendDeviceFrame;
+    bool callSerialUidAck;
     bool crsfBatterySensorDetected;
     bool crsfBaroSensorDetected;
     uint8_t modelMatchId;
