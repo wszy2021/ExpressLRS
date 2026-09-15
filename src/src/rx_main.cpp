@@ -47,6 +47,9 @@
 #include <SPIFFS.h>
 #include "esp_task_wdt.h"
 #include "esp_system.h"
+#if defined(PLATFORM_ESP32_C3)
+#include "USB.h"
+#endif
 #endif
 
 //
@@ -64,6 +67,10 @@
 #include "driver/uart.h"
 #endif
 // ARDUINO_CORE_INVERT_FIX PT1 end
+
+#if defined(TARGET_RX) && (defined(Regulatory_Domain_CN_1900) || defined(ELRS_CN_SINGLE_BAND) || defined(RADIO_LR1121))
+#define RX_SERIAL_UID_REPORT 1
+#endif
 
 ///LUA///
 #define LUA_MAX_PARAMS 32
@@ -140,6 +147,13 @@ uint32_t serialBaud;
     HardwareSerial SERIAL_PROTOCOL_TX(USART2);
 #elif defined(TARGET_DIY_900_RX_STM32)
     HardwareSerial SERIAL_PROTOCOL_TX(USART1);
+#elif defined(PLATFORM_ESP32_C3) && defined(ARDUINO_USB_CDC_ON_BOOT)
+    // C3 CDC maps `Serial` to USB; UART0 is a separate HardwareSerial.
+    HardwareSerial SERIAL_PROTOCOL_TX(0);
+    #define SERIAL1_PROTOCOL_TX Serial1
+    const Stream *serial_protocol_tx = &(SERIAL_PROTOCOL_TX);
+    const Stream *serial1_protocol_tx = &(SERIAL1_PROTOCOL_TX);
+    SerialIO *serial1IO = nullptr;
 #else
     #define SERIAL_PROTOCOL_TX Serial
 
@@ -165,6 +179,9 @@ SerialIO *serialIO = nullptr;
     HardwareSerial CrsfRxSerial(USART3);
 #elif defined(TARGET_RX_FM30_MINI)
     #define SERIAL_PROTOCOL_RX SERIAL_PROTOCOL_TX
+#elif defined(PLATFORM_ESP32_C3) && defined(ARDUINO_USB_CDC_ON_BOOT)
+    #define SERIAL_PROTOCOL_RX SERIAL_PROTOCOL_TX
+    #define SERIAL1_PROTOCOL_RX Serial1
 #else
     #define SERIAL_PROTOCOL_RX Serial
     #define SERIAL1_PROTOCOL_RX Serial1
@@ -222,6 +239,12 @@ int16_t RFnoiseFloor; //measurement of the current RF noise floor
 #if defined(DEBUG_RX_SCOREBOARD)
 static bool lastPacketCrcError;
 #endif
+static volatile uint32_t g_rxHwCrcErr;
+static volatile uint32_t g_rxSoftCrcErr;
+static volatile uint32_t g_rxOk;
+static volatile uint32_t g_rxSyncOk;
+static volatile uint32_t g_rxSyncUidFail;
+static volatile uint32_t g_rxUidReport;
 ///////////////////////////////////////////////////////////////
 
 /// Variables for Sync Behaviour ////
@@ -1064,15 +1087,30 @@ static bool ICACHE_RAM_ATTR ProcessRfPacket_SYNC(uint32_t const now, OTA_Sync_s 
 {
     // Verify the first two of three bytes of the binding ID, which should always match
     if (otaSync->UID3 != UID[3] || otaSync->UID4 != UID[4])
+    {
+        ++g_rxSyncUidFail;
+        static uint8_t uidFailPrints;
+        if (uidFailPrints < 10)
+        {
+            ++uidFailPrints;
+            DBGLN("SYNC UID mismatch ota=%u,%u,%u local=%u,%u,%u",
+                  otaSync->UID3, otaSync->UID4, otaSync->UID5,
+                  UID[3], UID[4], UID[5]);
+        }
         return false;
+    }
 
     // The third byte will be XORed with inverse of the ModelId if ModelMatch is on
     // Only require the first 18 bits of the UID to match to establish a connection
     // but the last 6 bits must modelmatch before sending any data to the FC
     if ((otaSync->UID5 & ~MODELMATCH_MASK) != (UID[5] & ~MODELMATCH_MASK))
+    {
+        ++g_rxSyncUidFail;
         return false;
+    }
 
     LastSyncPacket = now;
+    ++g_rxSyncOk;
 #if defined(DEBUG_RX_SCOREBOARD)
     DBGW('s');
 #endif
@@ -1121,13 +1159,14 @@ bool ICACHE_RAM_ATTR ProcessRFPacket(SX12xxDriverCommon::rx_status const status)
         // but demod/params don't match (rate/IQ/BW). Silence = TX not heard at all.
         if (!InBindingMode && connectionState == disconnected)
         {
+            ++g_rxHwCrcErr;
             static uint8_t hwCrcErrPrints;
-            if (hwCrcErrPrints < 5)
+            if (hwCrcErrPrints < 10)
             {
                 ++hwCrcErrPrints;
-                DBGLN("HW CRC error rate=%u iq=%u",
+                DBGLN("HW CRC error rate=%u iq=%u freq=%u",
                       ExpressLRS_currAirRate_Modparams->index,
-                      (unsigned)Radio.IQinverted);
+                      (unsigned)Radio.IQinverted, Radio.currFreq);
             }
         }
         #if defined(DEBUG_RX_SCOREBOARD)
@@ -1144,14 +1183,16 @@ bool ICACHE_RAM_ATTR ProcessRFPacket(SX12xxDriverCommon::rx_status const status)
         // Only log while not yet fully connected — avoids alarming spam after got conn.
         if (!InBindingMode && connectionState != connected)
         {
+            ++g_rxSoftCrcErr;
             static uint8_t crcErrPrints;
-            if (crcErrPrints < 5)
+            if (crcErrPrints < 10)
             {
                 ++crcErrPrints;
-                DBGLN("CRC error type=%u rate=%u crcInit=%x",
+                DBGLN("CRC error type=%u rate=%u crcInit=%x uid=%u,%u,%u,%u,%u,%u",
                       otaPktPtr->std.type,
                       ExpressLRS_currAirRate_Modparams->index,
-                      OtaCrcInitializer);
+                      OtaCrcInitializer,
+                      UID[0], UID[1], UID[2], UID[3], UID[4], UID[5]);
             }
         }
         #if defined(DEBUG_RX_SCOREBOARD)
@@ -1166,6 +1207,7 @@ bool ICACHE_RAM_ATTR ProcessRFPacket(SX12xxDriverCommon::rx_status const status)
     unsigned long now = millis();
 
     LastValidPacket = now;
+    ++g_rxOk;
 
     switch (otaPktPtr->std.type)
     {
@@ -1478,7 +1520,7 @@ static void setupSerial()
     #endif
     // ARDUINO_CORE_INVERT_FIX PT2 end
 
-    Serial.begin(serialBaud, config, GPIO_PIN_RCSIGNAL_RX, GPIO_PIN_RCSIGNAL_TX, invert);
+    SERIAL_PROTOCOL_TX.begin(serialBaud, config, GPIO_PIN_RCSIGNAL_RX, GPIO_PIN_RCSIGNAL_TX, invert);
 #endif
 
     if (firmwareOptions.is_airport)
@@ -1642,11 +1684,15 @@ static void setupConfigAndPocCheck()
     config.Load();
 
     // If bound, track number of plug/unplug cycles to go to binding mode in eeprom
+#if defined(RX_SERIAL_UID_REPORT)
+    // Serial UID pairing does not use 3-plug bind
+#else
     if (config.GetIsBound() && config.GetPowerOnCounter() < 3)
     {
         config.SetPowerOnCounter(config.GetPowerOnCounter() + 1);
         config.Commit();
     }
+#endif
 
     // Set a deferred function to clear the power on counter if the RX has been running for more than 2s
     deferExecutionMillis(2000, []() {
@@ -1679,45 +1725,93 @@ static void setupTarget()
     setupTargetCommon();
 }
 
-#if defined(Regulatory_Domain_CN_1900)
+#if defined(RX_SERIAL_UID_REPORT)
 static bool serialUidReportActive = true;
 static uint32_t lastSerialUidReportMs = 0;
+
+static bool uidIsAllZero(const uint8_t *uid)
+{
+    return uid[0] == 0 && uid[1] == 0 && uid[2] == 0 && uid[3] == 0 && uid[4] == 0 && uid[5] == 0;
+}
+
+static bool isWeakUid(const uint8_t *uid)
+{
+    // All-zero, or only UID[5] stuffed (failed RNG). Keep 4-byte MSP binds.
+    return uidIsAllZero(uid) || (uid[0] == 0 && uid[1] == 0 && uid[2] == 0 && uid[3] == 0 && uid[4] == 0);
+}
 
 static void generateRandomUid(uint8_t *uid)
 {
 #if defined(PLATFORM_ESP32)
-    esp_fill_random(uid, UID_LEN);
-#elif defined(PLATFORM_ESP8266)
-    for (uint8_t i = 0; i < UID_LEN; i++)
+    // C3: eFuse MAC is valid before WiFi; esp_read_mac()/esp_fill_random() may still be 0.
+    uint64_t mac = ESP.getEfuseMac();
+    uid[0] = (uint8_t)(mac >> 0);
+    uid[1] = (uint8_t)(mac >> 8);
+    uid[2] = (uint8_t)(mac >> 16);
+    uid[3] = (uint8_t)(mac >> 24);
+    uid[4] = (uint8_t)(mac >> 32);
+    uid[5] = (uint8_t)(mac >> 40);
+    if (uidIsAllZero(uid))
     {
-        uid[i] = (uint8_t)RANDOM_REG32;
+        esp_read_mac(uid, ESP_MAC_WIFI_STA);
     }
+#elif defined(PLATFORM_ESP8266)
+    wifi_get_macaddr(STATION_IF, uid);
 #else
+    uint32_t seed = millis() ^ (uint32_t)(uintptr_t)uid;
     for (uint8_t i = 0; i < UID_LEN; i++)
     {
-        uid[i] = (uint8_t)random(256);
+        seed = seed * 1664525u + 1013904223u;
+        uid[i] = (uint8_t)(seed >> 16);
     }
 #endif
-    if (!UID_IS_BOUND(uid))
+    if (uidIsAllZero(uid) || isWeakUid(uid))
     {
-        uid[5] = 0xA5;
+        uid[0] = 0xA5;
+        uid[1] = 0x5A;
+        uid[2] = 0xE1;
+        uid[3] = 0x12;
+        uid[4] = 0x51;
+        uid[5] = 0xC3;
     }
 }
 
-static void sendSerialUidReport()
+static void writeUidFrame(uint8_t *frame, uint8_t len)
 {
-    if (serialIO == nullptr)
+    // Queue through SerialCRSF so the frame is not spliced into other CRSF output.
+    if (serialIO != nullptr)
+    {
+        serialIO->queueMSPFrameTransmission(frame);
+        return;
+    }
+    SERIAL_PROTOCOL_TX.write(frame, len);
+}
+
+static void sendSerialUidReport(uint8_t subcmd)
+{
+    // C8 0C 32 C8 EC 10 [09|0A] [UID0..5] [CRC] — never send an all-zero UID
+    if (uidIsAllZero(UID))
     {
         return;
     }
 
-    uint8_t frame[14] = {};
+    uint8_t frame[14];
+    frame[0] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
+    frame[1] = 0x0C;
+    frame[2] = CRSF_FRAMETYPE_COMMAND;
+    frame[3] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
+    frame[4] = CRSF_ADDRESS_CRSF_RECEIVER;
     frame[5] = CRSF_COMMAND_SUBCMD_RX;
-    frame[6] = CRSF_COMMAND_SUBCMD_RX_REPORT_UID;
+    frame[6] = subcmd;
     memcpy(&frame[7], UID, UID_LEN);
-    CRSF::SetExtendedHeaderAndCrc(frame, CRSF_FRAMETYPE_COMMAND, CRSF_EXT_FRAME_SIZE(2 + UID_LEN),
-                                  CRSF_ADDRESS_CRSF_RECEIVER, CRSF_ADDRESS_FLIGHT_CONTROLLER);
-    serialIO->queueMSPFrameTransmission(frame);
+    if (uidIsAllZero(&frame[7]))
+    {
+        return;
+    }
+    frame[13] = crsf_crc.calc(&frame[2], 11);
+
+    writeUidFrame(frame, sizeof(frame));
+    ++g_rxUidReport;
 }
 
 static void handleSerialUidReport(uint32_t now)
@@ -1727,18 +1821,36 @@ static void handleSerialUidReport(uint32_t now)
         return;
     }
 
-    if (connectionState == connected || telemetry.ShouldAckSerialUid())
+    if (connectionState == connected)
     {
         serialUidReportActive = false;
-        DBGLN("Stop serial UID report (connected=%u)", connectionState == connected);
+        DBGLN("Stop serial UID report (connected)");
         return;
     }
 
-    if (now - lastSerialUidReportMs >= 30)
+    if (now - lastSerialUidReportMs < 30)
     {
-        lastSerialUidReportMs = now;
-        sendSerialUidReport();
+        return;
     }
+    lastSerialUidReportMs = now;
+
+    if (uidIsAllZero(UID))
+    {
+        generateRandomUid(UID);
+        if (uidIsAllZero(UID))
+        {
+            return;
+        }
+        config.SetUID(UID);
+        config.Commit();
+        OtaUpdateCrcInitFromUid();
+        FHSSrandomiseFHSSsequence(uidMacSeedGet());
+        DBGLN("UID ready=(%d, %d, %d, %d, %d, %d)",
+              UID[0], UID[1], UID[2], UID[3], UID[4], UID[5]);
+    }
+
+    sendSerialUidReport(CRSF_COMMAND_SUBCMD_RX_REPORT_UID);
+    sendSerialUidReport(CRSF_COMMAND_SUBCMD_RX_SET_UID);
 }
 #endif
 
@@ -1750,13 +1862,13 @@ static void setupBindingFromConfig()
     {
         memcpy(UID, config.GetUID(), UID_LEN);
     }
-#if defined(Regulatory_Domain_CN_1900)
-    else
+#if defined(RX_SERIAL_UID_REPORT)
+    if (isWeakUid(UID))
     {
         generateRandomUid(UID);
         config.SetUID(UID);
         config.Commit();
-        DBGLN("Generated random UID");
+        DBGLN("Generated unique UID");
     }
 #else
     else if (firmwareOptions.hasUID)
@@ -1794,8 +1906,7 @@ static void setupRadio()
 
     scanIndex = config.GetRateInitialIdx();
 #if defined(ELRS_CN_SINGLE_BAND)
-    // Index 0 is GFSK; TX defaults to LoRa 250Hz (index 1). Never boot-dwell on FSK
-    // or power-cycle reconnect will miss the TX until a slow rate cycle completes.
+    // Index 0 is GFSK; never boot-dwell on FSK.
     if (scanIndex == 0)
     {
         scanIndex = 1;
@@ -1882,6 +1993,15 @@ static void EnterBindingMode()
         return;
     }
 
+#if defined(RX_SERIAL_UID_REPORT)
+    // Same-UID designated connect; radio/FC bind would switch to CRCInit=0
+    if (UID_IS_BOUND(UID))
+    {
+        DBGLN("Skip bind, designated UID connect");
+        return;
+    }
+#endif
+
     // never enter binding mode if binding is supposed to only be administered through the web UI
     if (config.GetBindStorage() == BINDSTORAGE_ADMINISTERED) {
         return;
@@ -1959,6 +2079,15 @@ static void ExitBindingMode()
 
 static void updateBindingMode(unsigned long now)
 {
+#if defined(RX_SERIAL_UID_REPORT)
+    // Radio/FC may have already put us in bind; leave it and listen with UID CRC
+    if (InBindingMode && UID_IS_BOUND(UID))
+    {
+        ExitBindingMode();
+        return;
+    }
+#endif
+
     // Exit binding mode if the config has been modified, indicating UID has been set
     if (InBindingMode && config.IsModified())
     {
@@ -1986,25 +2115,40 @@ static void updateBindingMode(unsigned long now)
     // If the power on counter is >=3, enter binding, the counter will be reset after 2s
     else if (!InBindingMode && config.GetPowerOnCounter() >= 3)
     {
+#if defined(RX_SERIAL_UID_REPORT)
+        config.SetPowerOnCounter(0);
+        config.Commit();
+#else
 #if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP8266)
         // Never enter wifi if forced to binding mode
         webserverPreventAutoStart = true;
 #endif
         DBGLN("Power on counter >=3, enter binding mode");
         EnterBindingMode();
+#endif
     }
 
     // If the eeprom is indicating that we're not bound, enter binding
     else if (!UID_IS_BOUND(UID) && !InBindingMode)
     {
+#if defined(RX_SERIAL_UID_REPORT)
+        // Unique UID is generated in setupBindingFromConfig; do not fall back to RF bind
+#else
         DBGLN("RX has not been bound, enter binding mode");
         EnterBindingMode();
+#endif
     }
 
     else if (BindingModeRequest)
     {
         DBGLN("Connected request to enter binding mode");
         BindingModeRequest = false;
+#if defined(RX_SERIAL_UID_REPORT)
+        if (UID_IS_BOUND(UID))
+        {
+            return;
+        }
+#endif
         if (connectionState == connected)
         {
             LostConnection(false);
@@ -2258,8 +2402,13 @@ void setup()
         // pre-initialise serial must be done before anything as some libs write
         // to the serial port and they'll block if the buffer fills
         #if defined(DEBUG_LOG)
+        #if defined(PLATFORM_ESP32_C3) || defined(PLATFORM_ESP32_S3)
+        USBSerial.begin(460800);
+        SerialLogger = &USBSerial;
+        #else
         Serial.begin(serialBaud);
         SerialLogger = &Serial;
+        #endif
         #else
         SerialLogger = new NullStream();
         #endif
@@ -2340,9 +2489,38 @@ void loop()
 
     devicesUpdate(now);
 
+#if defined(DEBUG_LOG)
+    {
+        static uint32_t lastPairDbg;
+        if (now - lastPairDbg >= 1000)
+        {
+            lastPairDbg = now;
+            const uint32_t hw = g_rxHwCrcErr;
+            const uint32_t soft = g_rxSoftCrcErr;
+            const uint32_t ok = g_rxOk;
+            const uint32_t syncOk = g_rxSyncOk;
+            const uint32_t uidFail = g_rxSyncUidFail;
+            const uint32_t uidRep = g_rxUidReport;
+            g_rxHwCrcErr = 0;
+            g_rxSoftCrcErr = 0;
+            g_rxOk = 0;
+            g_rxSyncOk = 0;
+            g_rxSyncUidFail = 0;
+            g_rxUidReport = 0;
+            DBGLN("RX st=%u bind=%u rate=%u hz=%u freq=%u iq=%u crc=%x uid=%u,%u,%u,%u,%u,%u ok=%u sync=%u uidFail=%u hwCrc=%u crc=%u uidTx=%u",
+                  (unsigned)connectionState, (unsigned)InBindingMode,
+                  ExpressLRS_currAirRate_Modparams ? ExpressLRS_currAirRate_Modparams->index : 255,
+                  ExpressLRS_currAirRate_Modparams ? (unsigned)(1000000 / ExpressLRS_currAirRate_Modparams->interval) : 0,
+                  Radio.currFreq, (unsigned)Radio.IQinverted, OtaCrcInitializer,
+                  UID[0], UID[1], UID[2], UID[3], UID[4], UID[5],
+                  ok, syncOk, uidFail, hw, soft, uidRep);
+        }
+    }
+#endif
+
     // read and process any data from serial ports, send any queued non-RC data
     handleSerialIO();
-#if defined(Regulatory_Domain_CN_1900)
+#if defined(RX_SERIAL_UID_REPORT)
     handleSerialUidReport(now);
 #endif
 

@@ -91,6 +91,13 @@ uint8_t MSPDataPackage[5];
 #define BindingSpamAmount 25
 #endif
 static uint16_t BindingSendCount;
+// Radio copied this RX UID onto the TX for designated connect (same UID).
+// Ignore subsequent bind commands from the radio.
+static bool serialUidActive = false;
+static volatile uint32_t g_txRfPackets;
+static volatile uint32_t g_txTimerTicks;
+static volatile uint32_t g_txSilentAwait;
+static volatile uint32_t g_txTlmPackets;
 bool RxWiFiReadyToSend = false;
 
 bool headTrackingEnabled = false;
@@ -222,6 +229,7 @@ bool ICACHE_RAM_ATTR ProcessTLMpacket(SX12xxDriverCommon::rx_status const status
   }
 
   LastTLMpacketRecvMillis = millis();
+  g_txTlmPackets++;
   LQCalc.add();
 
   Radio.GetLastPacketStats();
@@ -537,6 +545,8 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
     }
   }
 
+  g_txRfPackets++;
+
   if (InBindingMode)
   {
     // MSP finishes after a few packages; keep re-arming bind spam until BindingSpamAmount
@@ -586,9 +596,9 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
   uint8_t NonceFHSSresult = OtaNonce % ExpressLRS_currAirRate_Modparams->FHSShopInterval;
 
 #if defined(ELRS_CN_SINGLE_BAND)
-  // Post-bind: RX only listens on the sync FHSS frequency. While syncSpamCounter
-  // is active we hold that channel (TXdoneISR) and send sync every packet.
-  const bool cnPostBindSyncBlast = syncSpamCounter && connectionState == disconnected;
+  // RX listens on the sync frequency while disconnected. Keep blasting sync
+  // there until lock — hopping across 80 channels never reaches the RX.
+  const bool cnPostBindSyncBlast = connectionState == disconnected;
 #else
   const bool cnPostBindSyncBlast = false;
 #endif
@@ -726,9 +736,14 @@ void ICACHE_RAM_ATTR timerCallback()
     handset->JustSentRFpacket();
   }
 
-  // Do not transmit or advance FHSS/Nonce until in disconnected/connected state
-  if (connectionState == awaitingModelId)
+  // Do not transmit until disconnected/connected. Bind and CN 80-ch must still TX
+  // during the ModelID delay or the RX never hears the sync channel.
+  if (connectionState == awaitingModelId && !InBindingMode)
+  {
+    g_txSilentAwait++;
     return;
+  }
+  g_txTimerTicks++;
 
   // Tx Antenna Diversity
   if ((OtaNonce % ExpressLRS_currAirRate_Modparams->numOfSends == 0 || // Swicth with new packet data
@@ -788,13 +803,27 @@ static void UARTconnected()
   config.SetRate(index);
   if (connectionState == noCrossfire || connectionState < MODE_STATES)
   {
-    // When CRSF first connects, always go into a brief delay before
-    // starting to transmit, to make sure a ModelID update isn't coming
-    // right behind it
-    connectionState = awaitingModelId;
+#if defined(ELRS_CN_SINGLE_BAND)
+    // 80 FHSS channels: do not sit silent in awaitingModelId (~3.5s). The RX
+    // is parked on the sync frequency and will miss the link.
+    connectionState = disconnected;
+#else
+    if (serialUidActive)
+    {
+      connectionState = disconnected;
+    }
+    else
+    {
+      // When CRSF first connects, always go into a brief delay before
+      // starting to transmit, to make sure a ModelID update isn't coming
+      // right behind it
+      connectionState = awaitingModelId;
+    }
+#endif
   }
   // But start the timer to get OpenTX sync going and a ModelID update sent
   hwTimer::resume();
+  DBGLN("UART connected st=%u uidAct=%u rate=%u", (unsigned)connectionState, (unsigned)serialUidActive, config.GetRate());
 }
 
 void ResetPower()
@@ -946,37 +975,26 @@ void ICACHE_RAM_ATTR TXdoneISR()
     // If the next packet should be on the next FHSS frequency, do the hop
     if (!InBindingMode && modResult == 0)
     {
-#if defined(ELRS_CN_SINGLE_BAND)
-      // Hold sync channel while post-bind sync blast is running. With 80 FHSS
-      // channels, hopping would burn most syncSpam packets on freqs the RX
-      // (parked on sync) can never hear.
-      const bool holdSyncChannel = syncSpamCounter && connectionState == disconnected;
-#else
-      const bool holdSyncChannel = false;
-#endif
-      if (!holdSyncChannel)
+      // Gemini mode
+      // If using DualBand always set the correct frequency band to the radios.  The HighFreq/LowFreq Tx amp is set during config.
+      if ((isDualRadio() && config.GetAntennaMode() == TX_RADIO_MODE_GEMINI) || FHSSuseDualBand)
       {
-        // Gemini mode
-        // If using DualBand always set the correct frequency band to the radios.  The HighFreq/LowFreq Tx amp is set during config.
-        if ((isDualRadio() && config.GetAntennaMode() == TX_RADIO_MODE_GEMINI) || FHSSuseDualBand)
+        // Optimises the SPI traffic order.
+        if (Radio.GetProcessingPacketRadio() == SX12XX_Radio_1)
         {
-          // Optimises the SPI traffic order.
-          if (Radio.GetProcessingPacketRadio() == SX12XX_Radio_1)
-          {
-            const uint32_t freqRadio = FHSSgetNextFreq();
-            Radio.SetFrequencyReg(FHSSgetGeminiFreq(), SX12XX_Radio_2, doRx);
-            Radio.SetFrequencyReg(freqRadio, SX12XX_Radio_1, doRx);
-          }
-          else
-          {
-            Radio.SetFrequencyReg(FHSSgetNextFreq(), SX12XX_Radio_1, doRx);
-            Radio.SetFrequencyReg(FHSSgetGeminiFreq(), SX12XX_Radio_2, doRx);
-          }
+          const uint32_t freqRadio = FHSSgetNextFreq();
+          Radio.SetFrequencyReg(FHSSgetGeminiFreq(), SX12XX_Radio_2, doRx);
+          Radio.SetFrequencyReg(freqRadio, SX12XX_Radio_1, doRx);
         }
         else
         {
-          Radio.SetFrequencyReg(FHSSgetNextFreq(), SX12XX_Radio_All, doRx);
+          Radio.SetFrequencyReg(FHSSgetNextFreq(), SX12XX_Radio_1, doRx);
+          Radio.SetFrequencyReg(FHSSgetGeminiFreq(), SX12XX_Radio_2, doRx);
         }
+      }
+      else
+      {
+        Radio.SetFrequencyReg(FHSSgetNextFreq(), SX12XX_Radio_All, doRx);
       }
     }
     else if (doRx)
@@ -1101,12 +1119,20 @@ void SendUIDOverMSP()
 
 static void EnterBindingMode()
 {
+  if (serialUidActive)
+  {
+    DBGLN("Skip bind, designated UID connect is active");
+    return;
+  }
+
   if (InBindingMode)
       return;
 
   // Disable the TX timer and wait for any TX to complete
   hwTimer::stop();
   while (busyTransmitting);
+
+  connectionState = disconnected;
 
   // Queue up sending the Master UID as MSP packets
   // Binding uses a CRCInit=0, 50Hz, and InvertIQ
@@ -1187,7 +1213,11 @@ void EnterBindingModeSafely()
 
 void ApplySerialUid(const uint8_t *newUid)
 {
-  if (memcmp(UID, newUid, UID_LEN) == 0)
+  serialUidActive = true;
+
+  const bool uidChanged = memcmp(UID, newUid, UID_LEN) != 0;
+  // Same UID, already in normal TX: radio may keep forwarding 10 0A
+  if (!uidChanged && !InBindingMode && connectionState != awaitingModelId)
   {
     return;
   }
@@ -1195,10 +1225,14 @@ void ApplySerialUid(const uint8_t *newUid)
   hwTimer::stop();
   while (busyTransmitting);
 
-  memcpy(UID, newUid, UID_LEN);
-  config.SetSerialUid(UID);
+  if (uidChanged)
+  {
+    memcpy(UID, newUid, UID_LEN);
+    config.SetSerialUid(UID);
+    FHSSrandomiseFHSSsequence(uidMacSeedGet());
+  }
+  // Designated connect uses the UID CRC/FHSS/sync words, not bind CRCInit=0
   OtaUpdateCrcInitFromUid();
-  FHSSrandomiseFHSSsequence(uidMacSeedGet());
 
   if (InBindingMode)
   {
@@ -1206,18 +1240,26 @@ void ApplySerialUid(const uint8_t *newUid)
     InBindingMode = false;
   }
 
-  // Force radio reconfigure so LR1121 sync words and FHSS match the new UID
   ExpressLRS_currAirRate_Modparams = nullptr;
+#if defined(ELRS_CN_SINGLE_BAND)
+  // RX boots on LoRa 250Hz. TX EEPROM often still has 50Hz leftover from bind.
+  auto index = enumRatetoIndex(RATE_LORA_1900_250HZ);
+  config.SetRate(index);
+  syncSpamCounter = 100;
+  syncSpamCounterAfterRateChange = 100;
+#else
   auto index = adjustPacketRateForBaud(config.GetRate());
+  syncSpamCounter = syncSpamAmount;
+  syncSpamCounterAfterRateChange = syncSpamAmountAfterRateChange;
+#endif
   SetRFLinkRate(index);
   ExpressLRS_currTlmDenom = TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval);
   connectionState = disconnected;
-  syncSpamCounter = syncSpamAmount;
-  syncSpamCounterAfterRateChange = syncSpamAmountAfterRateChange;
+  rfModeLastChangedMS = millis();
   hwTimer::resume();
 
-  DBGLN("Serial UID=(%d, %d, %d, %d, %d, %d) crcInit=%x",
-        UID[0], UID[1], UID[2], UID[3], UID[4], UID[5], OtaCrcInitializer);
+  DBGLN("Serial UID connect=(%d, %d, %d, %d, %d, %d) crcInit=%x rate=%u",
+        UID[0], UID[1], UID[2], UID[3], UID[4], UID[5], OtaCrcInitializer, index);
 }
 
 void ProcessMSPPacket(uint32_t now, mspPacket_t *packet)
@@ -1666,9 +1708,13 @@ void setup()
     uint8_t serialUid[UID_LEN];
     if (config.GetSerialUid(serialUid))
     {
+      serialUidActive = true;
       memcpy(UID, serialUid, UID_LEN);
       OtaUpdateCrcInitFromUid();
       FHSSrandomiseFHSSsequence(uidMacSeedGet());
+#if defined(ELRS_CN_SINGLE_BAND)
+      config.SetRate(enumRatetoIndex(RATE_LORA_1900_250HZ));
+#endif
       DBGLN("UID from serial store=(%d, %d, %d, %d, %d, %d)",
             UID[0], UID[1], UID[2], UID[3], UID[4], UID[5]);
     }
@@ -1772,6 +1818,31 @@ void loop()
   executeDeferredFunction(micros());
 
   HandleUARTin();
+
+#if defined(DEBUG_LOG)
+  {
+    static uint32_t lastPairDbg;
+    if (now - lastPairDbg >= 1000)
+    {
+      lastPairDbg = now;
+      const uint32_t rf = g_txRfPackets;
+      const uint32_t ticks = g_txTimerTicks;
+      const uint32_t silent = g_txSilentAwait;
+      const uint32_t tlm = g_txTlmPackets;
+      g_txRfPackets = 0;
+      g_txTimerTicks = 0;
+      g_txSilentAwait = 0;
+      g_txTlmPackets = 0;
+      DBGLN("TX st=%u bind=%u uidAct=%u rate=%u hz=%u freq=%u iq=%u crc=%x uid=%u,%u,%u,%u,%u,%u rf/s=%u tick/s=%u tlm/s=%u silent=%u pwr=%u",
+            (unsigned)connectionState, (unsigned)InBindingMode, (unsigned)serialUidActive,
+            ExpressLRS_currAirRate_Modparams ? ExpressLRS_currAirRate_Modparams->index : 255,
+            ExpressLRS_currAirRate_Modparams ? (unsigned)(1000000 / ExpressLRS_currAirRate_Modparams->interval) : 0,
+            Radio.currFreq, (unsigned)Radio.IQinverted, OtaCrcInitializer,
+            UID[0], UID[1], UID[2], UID[3], UID[4], UID[5],
+            rf, ticks, tlm, silent, (unsigned)POWERMGNT::currPower());
+    }
+  }
+#endif
 
   if (connectionState > MODE_STATES)
   {

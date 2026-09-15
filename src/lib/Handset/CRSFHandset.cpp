@@ -330,20 +330,38 @@ bool CRSFHandset::processInternalCrsfPackage(uint8_t *package)
         && header->payload[0] == CRSF_COMMAND_SUBCMD_RX
         && header->payload[1] == CRSF_COMMAND_SUBCMD_RX_BIND)
     {
+        DBGLN("CRSF BIND cmd dest=%02X orig=%02X", header->dest_addr, header->orig_addr);
         if (OnBindingCommand) OnBindingCommand();
         return true;
     }
 
-    // Radio sends UID for the TX to adopt: EE 0C 32 EE EA 10 0A [UID6] [CRC]
+    // Designated UID connect. Accept EE/EA from the radio, and a forwarded RX
+    // report (C8/EC 10 09) so the TX can adopt the same 6-byte UID.
     if (packetType == CRSF_FRAMETYPE_COMMAND
         && header->frame_size >= 12
-        && header->dest_addr == CRSF_ADDRESS_CRSF_TRANSMITTER
-        && header->orig_addr == CRSF_ADDRESS_RADIO_TRANSMITTER
         && header->payload[0] == CRSF_COMMAND_SUBCMD_RX
-        && header->payload[1] == CRSF_COMMAND_SUBCMD_RX_SET_UID)
+        && (header->payload[1] == CRSF_COMMAND_SUBCMD_RX_SET_UID
+            || header->payload[1] == CRSF_COMMAND_SUBCMD_RX_REPORT_UID)
+        && UID_IS_BOUND(&header->payload[2]))
     {
+        DBGLN("CRSF UID dest=%02X orig=%02X sub=%02X uid=%u,%u,%u,%u,%u,%u",
+              header->dest_addr, header->orig_addr, header->payload[1],
+              header->payload[2], header->payload[3], header->payload[4],
+              header->payload[5], header->payload[6], header->payload[7]);
         ApplySerialUid(&header->payload[2]);
         return true;
+    }
+
+    if (packetType == CRSF_FRAMETYPE_COMMAND)
+    {
+        static uint8_t cmdLogs;
+        if (cmdLogs < 15)
+        {
+            ++cmdLogs;
+            DBGLN("CRSF CMD ignored dest=%02X orig=%02X sz=%u p0=%02X p1=%02X p2=%02X",
+                  header->dest_addr, header->orig_addr, header->frame_size,
+                  header->payload[0], header->payload[1], header->payload[2]);
+        }
     }
 
     if (packetType >= CRSF_FRAMETYPE_DEVICE_PING &&

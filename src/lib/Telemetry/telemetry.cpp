@@ -248,14 +248,17 @@ bool Telemetry::processInternalTelemetryPackage(uint8_t *package)
             callEnterBind = true;
             return true;
         }
-        // FC ack/set for RX-reported UID: dest=RX orig=FC 10 09/0A
-        if (header->frame_size >= 6
+        // FC ack for RX-reported UID: orig=FC 10 09/0A with a real UID (not all-zero query)
+        if (header->frame_size >= 12
             && header->orig_addr == CRSF_ADDRESS_FLIGHT_CONTROLLER
             && header->payload[0] == CRSF_COMMAND_SUBCMD_RX
             && (header->payload[1] == CRSF_COMMAND_SUBCMD_RX_REPORT_UID
                 || header->payload[1] == CRSF_COMMAND_SUBCMD_RX_SET_UID))
         {
-            callSerialUidAck = true;
+            if (header->payload[4] || header->payload[5] || header->payload[6] || header->payload[7])
+            {
+                callSerialUidAck = true;
+            }
             return true;
         }
         // Non CRSF, dest=b src=m -> set modelmatch
