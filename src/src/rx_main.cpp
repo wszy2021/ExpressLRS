@@ -147,9 +147,14 @@ uint32_t serialBaud;
     HardwareSerial SERIAL_PROTOCOL_TX(USART2);
 #elif defined(TARGET_DIY_900_RX_STM32)
     HardwareSerial SERIAL_PROTOCOL_TX(USART1);
-#elif defined(PLATFORM_ESP32_C3) && defined(ARDUINO_USB_CDC_ON_BOOT)
-    // C3 CDC maps `Serial` to USB; UART0 is a separate HardwareSerial.
-    HardwareSerial SERIAL_PROTOCOL_TX(0);
+#elif defined(PLATFORM_ESP32_C3)
+    // Must test the VALUE. The core always `#define ARDUINO_USB_CDC_ON_BOOT 0`
+    // when unset, so `defined()` is always true and a second UART0 object is created.
+#if ARDUINO_USB_CDC_ON_BOOT
+    #define SERIAL_PROTOCOL_TX Serial0
+#else
+    #define SERIAL_PROTOCOL_TX Serial
+#endif
     #define SERIAL1_PROTOCOL_TX Serial1
     const Stream *serial_protocol_tx = &(SERIAL_PROTOCOL_TX);
     const Stream *serial1_protocol_tx = &(SERIAL1_PROTOCOL_TX);
@@ -179,7 +184,7 @@ SerialIO *serialIO = nullptr;
     HardwareSerial CrsfRxSerial(USART3);
 #elif defined(TARGET_RX_FM30_MINI)
     #define SERIAL_PROTOCOL_RX SERIAL_PROTOCOL_TX
-#elif defined(PLATFORM_ESP32_C3) && defined(ARDUINO_USB_CDC_ON_BOOT)
+#elif defined(PLATFORM_ESP32_C3)
     #define SERIAL_PROTOCOL_RX SERIAL_PROTOCOL_TX
     #define SERIAL1_PROTOCOL_RX Serial1
 #else
@@ -1778,13 +1783,13 @@ static void generateRandomUid(uint8_t *uid)
 
 static void writeUidFrame(uint8_t *frame, uint8_t len)
 {
-    // Queue through SerialCRSF so the frame is not spliced into other CRSF output.
+    SERIAL_PROTOCOL_TX.write(frame, len);
+    SERIAL_PROTOCOL_TX.flush();
     if (serialIO != nullptr)
     {
         serialIO->queueMSPFrameTransmission(frame);
-        return;
+        serialIO->sendQueuedData(64);
     }
-    SERIAL_PROTOCOL_TX.write(frame, len);
 }
 
 static void sendSerialUidReport(uint8_t subcmd)
@@ -1821,10 +1826,10 @@ static void handleSerialUidReport(uint32_t now)
         return;
     }
 
-    if (connectionState == connected)
+    if (telemetry.ShouldAckSerialUid())
     {
         serialUidReportActive = false;
-        DBGLN("Stop serial UID report (connected)");
+        DBGLN("Stop serial UID report (FC ack)");
         return;
     }
 
@@ -1868,7 +1873,8 @@ static void setupBindingFromConfig()
         generateRandomUid(UID);
         config.SetUID(UID);
         config.Commit();
-        DBGLN("Generated unique UID");
+        DBGLN("Generated unique UID=(%d, %d, %d, %d, %d, %d)",
+              UID[0], UID[1], UID[2], UID[3], UID[4], UID[5]);
     }
 #else
     else if (firmwareOptions.hasUID)
@@ -2446,6 +2452,10 @@ void setup()
         devicesInit();
 
         setupBindingFromConfig();
+#if defined(RX_SERIAL_UID_REPORT)
+        sendSerialUidReport(CRSF_COMMAND_SUBCMD_RX_REPORT_UID);
+        sendSerialUidReport(CRSF_COMMAND_SUBCMD_RX_SET_UID);
+#endif
 
         FHSSrandomiseFHSSsequence(uidMacSeedGet());
 

@@ -1,5 +1,6 @@
 #include "telemetry.h"
 
+#include <cstring>
 #include <functional>
 
 #if CRSF_RX_MODULE
@@ -14,6 +15,11 @@ extern TCPSOCKET wifi2tcp;
 #endif
 
 #include "helpers.h"
+
+extern uint8_t UID[];
+#ifndef UID_LEN
+#define UID_LEN 6
+#endif
 
 // Size byte in FIFO contains bit to indicate if the frame is deleted
 #define IS_DEL(size) (size & bit(7))
@@ -248,14 +254,17 @@ bool Telemetry::processInternalTelemetryPackage(uint8_t *package)
             callEnterBind = true;
             return true;
         }
-        // FC ack for RX-reported UID: orig=FC 10 09/0A with a real UID (not all-zero query)
+        // FC ack: only stop reporting when the FC echoes THIS receiver's UID.
+        // A query/command with leftover non-zero bytes must not cancel the report
+        // or the FC keeps displaying 0,0,0,0,0,0.
         if (header->frame_size >= 12
             && header->orig_addr == CRSF_ADDRESS_FLIGHT_CONTROLLER
             && header->payload[0] == CRSF_COMMAND_SUBCMD_RX
             && (header->payload[1] == CRSF_COMMAND_SUBCMD_RX_REPORT_UID
                 || header->payload[1] == CRSF_COMMAND_SUBCMD_RX_SET_UID))
         {
-            if (header->payload[4] || header->payload[5] || header->payload[6] || header->payload[7])
+            if (memcmp(&header->payload[2], UID, UID_LEN) == 0 &&
+                (UID[0] | UID[1] | UID[2] | UID[3] | UID[4] | UID[5]) != 0)
             {
                 callSerialUidAck = true;
             }

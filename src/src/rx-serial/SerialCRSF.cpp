@@ -114,8 +114,11 @@ void SerialCRSF::queueMSPFrameTransmission(uint8_t* data)
     {
         data[0] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
         _fifo.lock();
-        _fifo.push(totalBufferLen);
-        _fifo.pushBytes(data, totalBufferLen);
+        if (_fifo.ensure(totalBufferLen + 1))
+        {
+            _fifo.push(totalBufferLen);
+            _fifo.pushBytes(data, totalBufferLen);
+        }
         _fifo.unlock();
     }
 }
